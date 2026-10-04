@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en_US">
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<title>Dungeon Blitz Talent Calculator</title>
+	<link rel="stylesheet" href="main.css?v=54" type="text/css">
+	<link rel="stylesheet" href="responsive.css?v=1" type="text/css">
+	<link rel="shortcut icon" href="favicon.ico">
+	<script type="text/javascript">
+		var json_version = 54;
+	</script>
+	<script src="js/jquery-1.10.2.min.js"></script>
+	<script src="js/talent-data.js?v=60"></script>
+	<script src="js/mage-data.js?v=2"></script>
+	<script src="js/viperblade-data.js?v=2"></script>
+	<script src="js/soulthief-data.js?v=2"></script>
+	<script src="js/sentinel-data.js?v=1"></script>
+	<script src="js/justicar-data.js?v=1"></script>
+	<script src="js/templar-data.js?v=1"></script>
+	<script src="js/talentcalc.js?v=59"></script>
+	<script src="js/all-disciplines.js?v=3"></script>
+	<script src="js/responsive.js?v=1" defer></script>
+	<script src="js/embed.js?v=1"></script>
+</head>
+<body>
+	<div class="calculator-stage" id="calculator_stage">
+		<div class="calculator-shell" id="calculator_shell">
+			<div class="content-header">
+				<div class="header">
+					<div class="dsc-nav">
+						<div class="dsc-select dsc1" dsc_id="0"><div class="dsc-tip">Mage<br>Frostbringer</div></div>
+						<div class="dsc-select dsc2" dsc_id="1"><div class="dsc-tip">Mage<br>Flameseer</div></div>
+						<div class="dsc-select dsc3" dsc_id="2"><div class="dsc-tip">Mage<br>Necromancer</div></div>
+						<div class="dsc-select dsc4 default" dsc_id="3"><div class="dsc-tip">Rogue<br>Viperblade</div></div>
+						<div class="dsc-select dsc5" dsc_id="4"><div class="dsc-tip">Rogue<br>Shadowstalker</div></div>
+						<div class="dsc-select dsc6" dsc_id="5"><div class="dsc-tip">Rogue<br>Soulthief</div></div>
+						<div class="dsc-select dsc7" dsc_id="6"><div class="dsc-tip">Paladin<br>Sentinel</div></div>
+						<div class="dsc-select dsc8" dsc_id="7"><div class="dsc-tip">Paladin<br>Justicar</div></div>
+						<div class="dsc-select dsc9" dsc_id="8"><div class="dsc-tip">Paladin<br>Templar</div></div>
+					</div>
+				</div>
+			</div>
+
+			<div class="loading-holder"><div class="loading">Loading...</div></div>
+
+			<div class="content-body">
+				<div class="tree-content">
+					<div class="panel-left">
+						<div class="tree-panel-left">
+							<div class="talent-exp-holder">
+								<div class="talent-exp"></div>
+							</div>
+							<div class="talent-select-wrap"></div>
+						</div>
+					</div>
+
+					<div class="panel-right">
+						<div class="tree-panel-right"></div>
+					</div>
+
+					<div class="talent-tree-wrap">
+						<div class="discipline"></div>
+						<div class="talent-tree"></div>
+					</div>
+
+					<div class="talent-points-holder">
+						<div class="talent-points-wrap">
+							<div class="talent-points">
+								<div class="talent-points-inactive">
+									<div class="talent-points-trained"></div>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="calculator-actions" role="toolbar" aria-label="Build actions">
+		<div class="calculator-actions-inner">
+			<button type="button" class="calculator-action" id="undo_button">Undo</button>
+			<button type="button" class="calculator-action" id="reset_button">Reset</button>
+			<a class="calculator-action" href="#" id="link_button" role="button">Share build</a>
+			<span class="share-status" id="share_status" aria-live="polite"></span>
+		</div>
+	</div>
+
+	<div class="talent-tree-tip hidden"></div>
+</body>
+</html>
