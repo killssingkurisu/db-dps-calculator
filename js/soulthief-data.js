@@ -15,7 +15,7 @@
 			{"name":"Health IV","tier":[4,3],"description":"Increases health.","parameter":"Health","values":["279","558","977","1395","2093"],"stat":3,"icon":[15,0]},
 			{"name":"Insidious Poison","tier":[5,1],"description":"Increases poison damage vs. bound targets.","parameter":"Poison vs Bound","values":["2%","6%","13%","23%","35%"],"stat":9,"icon":[19,2]},
 			{"name":"Expertise V","tier":[5,2],"description":"Increases expertise.","parameter":"Expertise","values":["11","34","56","78","112"],"stat":5,"icon":[0,1]},
-			{"name":"Defense V","tier":[5,3],"description":"Increases defense.","parameter":"Defense","values":["3","10","17","24","34"],"stat":6,"icon":[6,1]},
+			{"name":"Defense V","tier":[5,3],"description":"Increases defense.","parameter":"Defense","values":["3","10","17","24","34"],"stat":6,"icon":[7,1]},
 			{"name":"Wind Cloak","tier":[6,1],"description":"Gain bonus defense vs. projectiles.","parameter":"Defense","values":["1%","2%","3%","5%","7%"],"stat":10,"icon":[16,2]},
 			{"name":"Tenacious Hex","tier":[6,2],"description":"Increases bind strength damage.","parameter":"Effect","values":["1%","2%","3%","4%","5%"],"stat":11,"icon":[18,2]},
 			{"name":"Attack VI","tier":[6,3],"description":"Increases attack.","parameter":"Attack","values":["12","37","61","86","123"],"stat":1,"icon":[4,1]},

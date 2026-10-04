@@ -3,7 +3,9 @@
 
 	window.updateBuildInfo = function () {
 		originalUpdateBuildInfo();
-		var currentExp = Math.min(100, (DBCalc.points_spent / 90) * 100);
+		// Matches the game client: the bar fills over 70 points (rank XIV unlocks at 65, +5),
+		// so each row lines up with the 5 points that unlock it.
+		var currentExp = Math.min(100, (DBCalc.points_spent / 70) * 100);
 		$(".talent-exp").stop(true).animate({ height: currentExp + "%" }, { duration: 200, queue: false });
 	};
 
