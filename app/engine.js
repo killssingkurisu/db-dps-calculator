@@ -398,25 +398,54 @@
 
 	var CHARM_MAX_RANK = 10;
 
-	// A charm key is "attack" (top rank), "attack@7" (rank 7 of the Attack gem) or a special
-	// charm's key ("eyeOfDiscovery"). Returns what one charm of that key gives, or null.
+	// Magic Forge: a gem charm can carry a second stat, the same rank of another gem at half
+	// value (tier R) or full value (tier L). The game names it with a suffix by the second
+	// gem, in this order (class_64 in the client): "Infinite Sapphire of Deflecting".
+	var FORGE_GEMS = ["gearFind", "critChance", "goldFind", "materialFind", "critPower", "hp", "attack", "expertise", "defense"];
+	var FORGE_SUFFIX = {
+		R: ["of Luck", "of Skill", "of Greed", "of Foraging", "of Carnage", "of Health", "of Strength", "of the Mind", "of Deflecting"],
+		L: ["of Fortune", "of Precision", "of Wealth", "of Scouring", "of Ruin", "of Fortitude", "of Might", "of Brilliance", "of Protection"]
+	};
+	var FORGE_SHARE = { R: 0.5, L: 1 };
+
+	function gemValue(gem, rank) {
+		if (gem.ranks) return gem.ranks[rank - 1];
+		return rank === CHARM_MAX_RANK ? gem.value : null;
+	}
+
+	// A charm key is "attack" (top rank), "attack@7" (rank 7 of the Attack gem), a special
+	// charm's key ("eyeOfDiscovery"), or a gem with a Magic Forge bonus: "expertise+defense:R"
+	// (Infinite Sapphire of Deflecting). Returns what one charm of that key gives, or null.
 	function charmInfo(key) {
-		var m = /^([A-Za-z]+)(?:@(\d+))?$/.exec(String(key || ""));
+		var m = /^([A-Za-z]+)(?:@(\d+))?(?:\+([A-Za-z]+):([RL]))?$/.exec(String(key || ""));
 		if (!m) return null;
 		var D = data();
 		var gem = D.charms.filter(function (c) { return c.key === m[1]; })[0];
 		if (gem) {
 			var rank = m[2] ? +m[2] : CHARM_MAX_RANK;
 			if (rank < 1 || rank > CHARM_MAX_RANK) return null;
-			var value = gem.ranks ? gem.ranks[rank - 1] : (rank === CHARM_MAX_RANK ? gem.value : null);
+			var value = gemValue(gem, rank);
 			if (value == null) return null;
 			var stats = {};
 			stats[gem.stat] = value;
 			var rankName = (D.charmRanks || [])[rank - 1] || "Rank " + rank;
-			return { key: rank === CHARM_MAX_RANK ? gem.key : gem.key + "@" + rank, type: gem.key, rank: rank, special: false,
-				name: rankName + " " + (gem.gem || gem.name), label: gem.name, stats: stats, unit: gem.unit };
+			var info = { key: rank === CHARM_MAX_RANK ? gem.key : gem.key + "@" + rank, type: gem.key, rank: rank, special: false,
+				name: rankName + " " + (gem.gem || gem.name), label: gem.name, stats: stats, unit: gem.unit, forge: null };
+			if (m[3]) {
+				var idx = FORGE_GEMS.indexOf(m[3]);
+				var second = D.charms.filter(function (c) { return c.key === m[3]; })[0];
+				var extra = second ? gemValue(second, rank) : null;
+				if (idx < 0 || extra == null) return null;
+				extra *= FORGE_SHARE[m[4]];
+				stats[second.stat] = (stats[second.stat] || 0) + extra;
+				info.key += "+" + second.key + ":" + m[4];
+				info.name += " " + FORGE_SUFFIX[m[4]][idx];
+				info.label = gem.name + " + " + second.name;
+				info.forge = { type: second.key, tier: m[4], stat: second.stat, value: extra };
+			}
+			return info;
 		}
-		if (m[2]) return null;
+		if (m[2] || m[3]) return null;
 		var sp = (D.specialCharms || []).filter(function (c) { return c.key === m[1]; })[0];
 		if (!sp) return null;
 		return { key: sp.key, type: sp.key, rank: CHARM_MAX_RANK, special: true, name: sp.name, label: sp.name, stats: sp.stats, unit: "pct" };
@@ -1368,6 +1397,7 @@
 
 	root.DBB_ENGINE = {
 		compute: compute, decodeBuild: decodeBuild, defaultState: defaultState, charmInfo: charmInfo, CHARM_MAX_RANK: CHARM_MAX_RANK,
+		FORGE_GEMS: FORGE_GEMS, FORGE_SUFFIX: FORGE_SUFFIX,
 		scannedStats: scannedStats, tableStats: tableStats,
 		CONDITIONS: CONDITIONS, SELF_CONDITIONS: SELF_CONDITIONS, OPPOSITE: OPPOSITE, SLOTS_TOTAL: SLOTS_TOTAL,
 		ARMOR_BREAKS: ARMOR_BREAKS, ARMOR_BANE_MAX: ARMOR_BANE_MAX, SCORCH_BASE_MAX: SCORCH_BASE_MAX,

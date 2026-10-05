@@ -90,6 +90,14 @@ for (const [d, def] of [[3, 1344], [0, 1008], [6, 1680]]) {
 check('charm name for attack@10', E.charmInfo('attack@10').name, 'Infinite Citrine');
 check('top rank key is normalized', E.charmInfo('attack@10').key, 'attack');
 check('unknown charm rank is rejected', E.charmInfo('attack@11'), null);
+// 3c. Magic Forge charms: a second gem of the same rank at half (R) or full (L) value.
+check('Infinite Sapphire of Deflecting name', E.charmInfo('expertise+defense:R').name, 'Infinite Sapphire of Deflecting');
+check('Infinite Sapphire of Deflecting defense', E.charmInfo('expertise+defense:R').stats.defense, 14);
+check('Infinite Amethyst of Ruin crit power', E.charmInfo('critChance+critPower:L').stats.critPower, 0.05, 1e-12);
+check('forged top-rank key is normalized', E.charmInfo('attack@10+hp:R').key, 'attack+hp:R');
+check('special charms have no forge bonus', E.charmInfo('eyeOfDiscovery+attack:R'), null);
+{ const s = bare(3); s.charms = { 'critChance+attack:R': 1, 'expertise+expertise:L': 1 }; const r = E.compute(s);
+  check('forged Attack bonus', r.stats.attack, 3914 + 42); check('forged bonus of the same stat adds up', r.stats.expertise, 2655 + 168); }
 // 4. Crit chance: notes example 70% stat -> 25.5%
 { const s = bare(3); s.extra.critChance = 70; check('crit 70% stat -> real', E.compute(s).stats.critReal, 0.255, 1e-12); }
 // 5a. Notes example: Heavy Blow with 20% crit power -> 70%

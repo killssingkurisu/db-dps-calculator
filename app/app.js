@@ -379,7 +379,8 @@
 		var name = c ? c.name : stat;
 		if (stat === "critChance") return "+" + pct(value, 1) + " crit stat (about " + pct(value * 0.15, 2) + " real)";
 		if (c && c.unit === "pct") return "+" + pct(value, 1) + " " + name;
-		return "+" + fmt(value) + " " + name;
+		// A half-strength forge bonus can end in .5, as the game shows it.
+		return "+" + (value % 1 ? value.toLocaleString("en-US", { maximumFractionDigits: 1 }) : fmt(value)) + " " + name;
 	}
 
 	function charmValueText(info) {
@@ -412,10 +413,10 @@
 		var list = $("charm-list");
 		clear(list);
 		D.charms.forEach(function (c) { list.appendChild(charmRow(c.key, false)); });
-		// Lower ranks and special charms, from a scan or added by hand.
+		// Lower ranks, forged and special charms, from a scan or added by hand.
 		Object.keys(state.charms).filter(function (k) {
 			var info = E.charmInfo(k);
-			return info && (info.special || info.rank < E.CHARM_MAX_RANK);
+			return info && (info.special || info.forge || info.rank < E.CHARM_MAX_RANK);
 		}).sort().forEach(function (k) { list.appendChild(charmRow(k, true)); });
 
 		var typeSel = el("select", { "aria-label": "Charm" });
@@ -423,11 +424,24 @@
 		(D.specialCharms || []).forEach(function (c) { typeSel.appendChild(option(c.key, c.name, false)); });
 		var rankSel = el("select", { "aria-label": "Rank" });
 		for (var r = E.CHARM_MAX_RANK; r >= 1; r--) rankSel.appendChild(option(String(r), r + " · " + (D.charmRanks[r - 1] || ""), r === E.CHARM_MAX_RANK));
-		function syncRank() { rankSel.disabled = !D.charms.some(function (c) { return c.key === typeSel.value; }); }
+		// Magic Forge bonus: half (R) or all (L) of the same rank of a second gem.
+		var forgeSel = el("select", { "aria-label": "Magic Forge bonus" });
+		forgeSel.appendChild(option("", "No forge bonus", true));
+		["R", "L"].forEach(function (tier) {
+			E.FORGE_GEMS.forEach(function (k, i) {
+				var g = D.charms.filter(function (c) { return c.key === k; })[0];
+				if (g) forgeSel.appendChild(option(k + ":" + tier, E.FORGE_SUFFIX[tier][i] + " · " + (tier === "R" ? "half " : "full ") + g.name, false));
+			});
+		});
+		function syncRank() {
+			var gem = D.charms.some(function (c) { return c.key === typeSel.value; });
+			rankSel.disabled = !gem;
+			forgeSel.disabled = !gem;
+		}
 		typeSel.addEventListener("change", syncRank);
 		syncRank();
 		var add = el("button", { type: "button", class: "btn btn-small", text: "Add", onclick: function () {
-			var key = rankSel.disabled ? typeSel.value : typeSel.value + "@" + rankSel.value;
+			var key = rankSel.disabled ? typeSel.value : typeSel.value + "@" + rankSel.value + (forgeSel.value ? "+" + forgeSel.value : "");
 			var info = E.charmInfo(key);
 			if (!info) return;
 			state.charms[info.key] = (state.charms[info.key] || 0) + 1;
@@ -435,8 +449,8 @@
 			onChange();
 		} });
 		list.appendChild(el("div", { class: "charm-add" }, [
-			el("span", { class: "field-label", text: "Add a lower-rank or special charm" }),
-			el("span", { class: "charm-add-row" }, [typeSel, rankSel, add])
+			el("span", { class: "field-label", text: "Add a lower-rank, forged or special charm" }),
+			el("span", { class: "charm-add-row" }, [typeSel, rankSel, forgeSel, add])
 		]));
 	}
 
