@@ -19,7 +19,7 @@ The talent calculator is part of the app and also works on its own at [`/talents
 - **Character sheet**: HP, Attack, Expertise, Defense, critical chance and power, damage per crit, attack speed and the rest, with where each number comes from.
 - **Critical hits**: per weapon rune, plus Mending Blow and Renew healing.
 - **Skill damage**: every skill at the chosen rank, split into the part that scales with Attack and the part that scales with Expertise, with the debuffs it leaves on the target, the buffs it gives you, its cast time, mana and cooldown, and Retribution's reflect.
-- **Combo DPS** (its own tab, or its own browser window with *Open in new window*): three preset combos per discipline that open with debuffs and buffs before the damage and DoT skills, plus one you build yourself. For the picked combo it shows sustained DPS (with the game's mana) and burst DPS (no mana limit), damage by skill (direct, critical, DoT), damage by type, how long each debuff stays on the target, and one pass of the combo step by step.
+- **Combo DPS** (its own tab, or its own browser window with *Open in new window*): three or more preset combos per discipline that open with debuffs and buffs before the damage and DoT skills, plus one you build yourself. For the picked combo it shows sustained DPS (with the game's mana) and burst DPS (no mana limit), damage by skill (direct, critical, DoT), damage by type, how long each debuff stays on the target, and one pass of the combo step by step.
 
 ## How the numbers are worked out
 

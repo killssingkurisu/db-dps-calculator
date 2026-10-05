@@ -1,5 +1,5 @@
 /*
- * Preset combos for the DPS Calculator, three per discipline. Each one opens with the
+ * Preset combos for the DPS Calculator, three or more per discipline. Each one opens with the
  * skills that debuff the target (Armor Bane, Armor Breaker, Scorch, curses, stuns,
  * binds) or buff you, then spends the hardest-hitting and DoT skills while those
  * debuffs are up. Only one skill per hotbar slot 1-3 can be equipped, so every combo
@@ -49,7 +49,10 @@ window.DBB_COMBOS = {
 			steps: ["VitalStrike", "PoisonStrike", "Decoy", "SeekingBlades", "MistWalk"] },
 		{ id: "vb-hawk", name: "Hawk Strike burst",
 			why: "Withering Impact adds Armor Bane and Bleed, Shadow Rend stacks Bleed, then Hawk Strike's single big hit and the master skills land on the debuffed target.",
-			steps: ["WitherStrike", "VitalStrike", "HawkStrike", "ShadowBlade", "SeekingBlades", "MistWalk"] }
+			steps: ["WitherStrike", "VitalStrike", "HawkStrike", "ShadowBlade", "SeekingBlades", "MistWalk"] },
+		{ id: "vb-flurry", name: "Flurry poison loop",
+			why: "Withering Impact puts up Bleed and Armor Bane, so Flurry of Daggers' poison lands on a bleeding target (Contact Poison) and adds four more Armor Bane; Charon's Blades, Vicious Assault and Mist Walk keep the Bleed stacks topped up.",
+			steps: ["WitherStrike", "DaggerFlurry", "SeekingBlades", "Assassinate", "MistWalk"] }
 	],
 	shadowstalker: [
 		{ id: "ss-cripple", name: "Cripple and pounce",
