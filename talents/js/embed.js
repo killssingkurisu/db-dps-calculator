@@ -10,6 +10,7 @@
 	var lastBuild = null;
 	var lastHeight = 0;
 	var timer = null;
+	var loadId = null;   // the parent's number for the build it last sent; echoed so it can drop older posts
 
 	function currentBuild() {
 		return typeof window.encodeBuild === "function" ? window.encodeBuild() : location.hash;
@@ -28,7 +29,7 @@
 		if (!force && build === lastBuild && height === lastHeight) return;
 		lastBuild = build;
 		lastHeight = height;
-		window.parent.postMessage({ type: "dbb-talents", build: build, height: height }, "*");
+		window.parent.postMessage({ type: "dbb-talents", build: build, height: height, id: loadId }, "*");
 	}
 
 	// Talent changes fire several updates in a row (one per socket while a build
@@ -62,7 +63,11 @@
 	window.addEventListener("message", function (event) {
 		if (event.source !== window.parent) return;
 		var data = event.data || {};
-		if (data.type === "dbb-load" && typeof data.build === "string") load(data.build);
+		if (data.type === "dbb-load" && typeof data.build === "string") {
+			loadId = data.id == null ? null : data.id;
+			load(data.build);
+			schedule(true);
+		}
 		if (data.type === "dbb-ping") schedule(true);
 	});
 	window.addEventListener("resize", function () { schedule(false); });

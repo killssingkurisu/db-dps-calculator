@@ -284,4 +284,68 @@ for (const disc of D.disciplines) {
 	const by = Object.fromEntries(res.skills.map(s => [s.key, s.direct]));
 	check('override from the latest cast is used', [by.X, by.Y].join(','), '2000,3000');
 }
+// 18. Party fights: one shared target, debuffs from anyone help everyone, party buffs reach everyone.
+{
+	const viper = E.compute(E.defaultState());                       // Viperblade with talents: Armor Bane, bleeds
+	const just = E.compute(Object.assign(E.defaultState(), { talents: '7' }));   // Justicar, no talents
+	const temp = E.compute(Object.assign(E.defaultState(), { talents: '8' }));   // Templar, no talents
+	const W = 30;
+	const jSteps = ['Harm', 'FuriousAssault', 'JumpSlam', 'LeapStrike'];
+	const vSteps = viper.combos[0].steps;
+	const soloJ = E.simulateParty([{ steps: jSteps, env: just.env }], W, false);
+	check('party of one matches the solo combo', soloJ.total, E._internal.simulateCombo(jSteps, just.env, W, false).total, 1e-6);
+	const duo = E.simulateParty([{ steps: vSteps, env: viper.env }, { steps: jSteps, env: just.env }], W, false);
+	check('party total is the sum of its members', duo.total, duo.members[0].total + duo.members[1].total, 1e-6);
+	check("Viperblade's debuffs raise the Justicar's damage", duo.members[1].total > soloJ.total, true);
+	check('members keep their own timelines', duo.members[1].timeline[0].key, 'Harm');
+	const aura = E.simulateParty([{ steps: ['LeoneanAura', 'Penance', 'CelestialLance', 'Cleave'], env: temp.env }, { steps: jSteps, env: just.env }], W, false);
+	const noAura = E.simulateParty([{ steps: ['Penance', 'CelestialLance', 'Cleave'], env: temp.env }, { steps: jSteps, env: just.env }], W, false);
+	check('Empyrean Aura buffs the rest of the party', aura.members[1].total > noAura.members[1].total, true);
+	check('Empyrean Aura is listed as a party buff', aura.members[0].partyBuffs.join(), 'Empyrean Aura');
+	const idle = E.simulateParty([{ steps: [], env: temp.env }, { steps: jSteps, env: just.env }], W, false);
+	check('a member without steps deals no damage', idle.members[0] === null && Math.abs(idle.total - soloJ.total) < 1e-6, true);
+	const opt = E.optimizeParty([
+		{ env: viper.env, choices: viper.combos.map(c => ({ id: c.id, steps: c.steps })) },
+		{ env: just.env, choices: just.combos.map(c => ({ id: c.id, steps: c.steps })) }
+	], W, true);
+	let bestSeen = 0;
+	viper.combos.forEach(a => just.combos.forEach(b => {
+		const r = E.simulateParty([{ steps: a.steps, env: viper.env }, { steps: b.steps, env: just.env }], W, true);
+		bestSeen = Math.max(bestSeen, r.total);
+	}));
+	check('party optimizer finds the best pair of combos', opt.total, bestSeen, 1e-6);
+	const big = E.optimizeParty([0, 1, 2, 3].map(() => ({ env: viper.env, choices: viper.combos.map(c => ({ id: c.id, steps: c.steps })) })), W, true, 10);
+	check('large party searches stay within reach', big.total >= E.simulateParty([0, 1, 2, 3].map(() => ({ steps: viper.combos[0].steps, env: viper.env })), W, true).total - 1e-6, true);
+}
+// 19. Load slots: up to four scans, talents per load.
+{
+	const mk = (name, cls) => L.parseScan(JSON.stringify({ format: 'dbb-inventory', version: 1, scannedAt: '2026-10-06T00:00:00Z',
+		character: { name, class: cls }, gear: [], charms: [{ key: 'attack', count: 1 }] })).inventory;
+	L.clearInventories();
+	const a = L.putInventory(mk('ksq', 'Rogue')), b = L.putInventory(mk('Doktor', 'Paladin')), c = L.putInventory(mk('Vidar', 'Mage'));
+	check('loads fill slots in order', [a.slot, b.slot, c.slot].join(), '1,2,3');
+	const d = L.putInventory(mk('Ana', 'Mage'));
+	check('fourth load takes slot 4', d.slot, 4);
+	check('a fifth character needs a slot', L.putInventory(mk('Extra', 'Rogue')), null);
+	L.setInventoryTalents(b.id, '6');
+	const b2 = L.putInventory(mk('Doktor', 'Paladin'));
+	check('updating a load keeps its slot and talents', b2.slot + ' ' + b2.talents, '2 6');
+	const e = L.putInventory(mk('Extra', 'Rogue'), 3);
+	check('a chosen slot replaces its load', e.slot + ' ' + L.inventories().map(x => x.character.name).join('/'), '3 ksq/Doktor/Extra/Ana');
+	L.moveInventory(e.id, 1);
+	check('moving a load swaps slots', L.inventories().map(x => x.slot + x.character.name).join('/'), '1Extra/2Doktor/3ksq/4Ana');
+	const merged = L.merge(L.current(), { inventories: [Object.assign(mk('Remote', 'Mage'), { id: 'inv-mage-remote', slot: 2, importedAt: Date.now() + 1000 })] });
+	const cleaned = L.merge(merged, {});
+	check('a merged load claiming a taken slot pushes the older one out', cleaned.inventories.filter(x => x.slot === 2).map(x => x.character.name).join() + ' ' + cleaned.inventories.filter(x => !x.slot).length, 'Remote 1');
+	L.clearInventories();
+	check('remove all loads', L.inventories().length, 0);
+	check('talent build string', L.parseTalents('3225h315b').talents, '3225h315b');
+	check('talent calculator link', L.parseTalents('https://db-calculator.theminesa.studio/#6123ab').discipline, 6);
+	check('DPS calculator link', L.parseTalents('https://x.test/#b=' + Buffer.from(JSON.stringify({ talents: '8115a' })).toString('base64url')).talents, '8115a');
+	check('nonsense is refused', !!L.parseTalents('hello').error, true);
+	const withT = L.parseScan(JSON.stringify({ format: 'dbb-inventory', version: 1, character: { name: 'x', class: 'Rogue', talents: '3225h' }, gear: [], charms: [{ key: 'attack', count: 1 }] }));
+	check('scan carries talents for its class', withT.inventory.talents, '3225h');
+	const wrongT = L.parseScan(JSON.stringify({ format: 'dbb-inventory', version: 1, character: { name: 'x', class: 'Rogue', talents: '8115a' }, gear: [], charms: [{ key: 'attack', count: 1 }] }));
+	check('talents of another class are dropped', wrongT.inventory.talents, undefined);
+}
 Promise.all(pending).then(() => console.log(ok + ' checks passed'));

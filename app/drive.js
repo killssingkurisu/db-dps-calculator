@@ -32,6 +32,7 @@
 	var listeners = [];
 	var syncing = null;
 	var again = false;
+	var pendingWorkspace = null;   // the party setup to store with the next upload (Back up now)
 	var autoTimer = null;
 	var applyingRemote = false;
 
@@ -226,6 +227,7 @@
 		if (syncing) { again = true; return syncing; }
 		setStatus("syncing", "Syncing with Google Drive…");
 		var local = LIB.current();
+		var didBackup = false;
 		syncing = (profile.fileId ? Promise.resolve(profile.fileId) : findFile())
 			.then(function (id) {
 				if (!id) return { id: "", remote: null };
@@ -241,8 +243,13 @@
 					applyingRemote = true;
 					try { LIB.replace(merged, "sync"); } finally { applyingRemote = false; }
 				}
-				var content = JSON.stringify({ app: "dbb-dps-calculator", v: 1, saved: new Date().toISOString(), library: merged });
-				if (remoteLib && LIB.same(merged, remoteLib)) return r.id;
+				// The party setup is only stored by "Back up now"; ordinary syncs keep the stored one.
+				var workspace = pendingWorkspace || (r.remote && r.remote.workspace) || undefined;
+				var fresh = !!pendingWorkspace;
+				pendingWorkspace = null;
+				var content = JSON.stringify({ app: "dbb-dps-calculator", v: 1, saved: new Date().toISOString(), library: merged, workspace: workspace });
+				if (remoteLib && LIB.same(merged, remoteLib) && !fresh) return r.id;
+				didBackup = fresh;
 				return r.id ? update(r.id, content).catch(function (e) {
 					if (e && e.status === 404) return create(content);
 					throw e;
@@ -251,6 +258,7 @@
 			.then(function (id) {
 				profile.fileId = id;
 				profile.lastSync = Date.now();
+				if (didBackup) profile.lastBackup = profile.lastSync;
 				saveProfile();
 				setStatus("synced", "");
 				return true;
@@ -266,6 +274,44 @@
 				return ok;
 			});
 		return syncing;
+	}
+
+	// Back up now: sync builds and loads, and store this party setup with them.
+	function backup(workspaceData) {
+		pendingWorkspace = { saved: new Date().toISOString(), data: workspaceData };
+		return sync();
+	}
+
+	// Load from Drive: this browser's builds and loads become the Drive copy (nothing local is
+	// kept), and the party setup stored by the last backup comes back. Resolves to
+	// { workspace } (null when the backup has none) or rejects with a message.
+	function restore() {
+		if (!tokenValid()) return Promise.reject(new Error(profile.email ? "Reconnect to Google Drive first." : "Sign in with Google first."));
+		// Let a sync that is under way finish first, so it can't merge the old library back in.
+		return Promise.resolve(syncing).then(function () {
+			setStatus("syncing", "Loading from Google Drive…");
+			return profile.fileId ? profile.fileId : findFile();
+		})
+			.then(function (id) {
+				if (!id) throw new DriveError(404, "There's no backup in your Google Drive yet. Press Back up now first.");
+				return download(id).then(function (remote) { return { id: id, remote: remote }; });
+			})
+			.then(function (r) {
+				var remoteLib = r.remote && typeof r.remote === "object" ? (r.remote.library || r.remote) : null;
+				if (!remoteLib) throw new DriveError(500, "The backup in your Google Drive couldn't be read.");
+				applyingRemote = true;
+				try { LIB.replace(remoteLib, "sync"); } finally { applyingRemote = false; }
+				profile.fileId = r.id;
+				profile.lastSync = Date.now();
+				saveProfile();
+				setStatus("synced", "");
+				return { workspace: (r.remote && r.remote.workspace) || null, saved: r.remote && r.remote.saved };
+			})
+			.catch(function (e) {
+				if (e && e.status === 404 && !/backup/.test(e.message || "")) { profile.fileId = ""; saveProfile(); }
+				fail(e);
+				throw new Error(e && e.message ? e.message : String(e));
+			});
 	}
 
 	function scheduleSync() {
@@ -307,6 +353,9 @@
 		signIn: signIn,
 		signOut: signOut,
 		sync: sync,
+		backup: backup,
+		restore: restore,
+		lastBackup: function () { return profile.lastBackup || 0; },
 		status: function () { return status; },
 		onStatus: function (f) { listeners.push(f); f(status); },
 		configured: !!CLIENT_ID,

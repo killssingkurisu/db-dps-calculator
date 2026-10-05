@@ -572,6 +572,17 @@
 		return map;
 	}
 
+	// A DoT's name with its variant: "(rank 7)" for ones that follow the skill rank, "(tier 4)"
+	// for numbered ones, and the variant's own words otherwise (Permafrost, Rune Poison Cloud).
+	function dotName(kind, buff, rank) {
+		var extra = "";
+		if (kind.rankedFrom && rank) extra = "rank " + rank[1];
+		else if (kind.buffs.length > 1 && rank && buff.replace(/\d+$/, "") === kind.buffs[0].replace(/\d+$/, "")) extra = "tier " + rank[1];
+		else if (buff !== kind.buffs[0]) extra = buff.replace(new RegExp("^" + kind.buffs[0]), "").replace(/Dot$/, "").replace(/([a-z])([A-Z])/g, "$1 $2").trim() || buff;
+		if (!extra) return kind.name;
+		return /\)$/.test(kind.name) ? kind.name.slice(0, -1) + ", " + extra + ")" : kind.name + " (" + extra + ")";
+	}
+
 	function makeDotBase(expertise, tal) {
 		var dots = data().dots;
 		var kinds = buffKindMap();
@@ -588,7 +599,7 @@
 			var perTick = expertise * (pb.tickPct + talentPct) / 100;
 			return (cache[buff] = {
 				buff: buff, kind: kindKey, kindName: kind.name,
-				name: kind.name + (kind.rankedFrom && rank ? " (rank " + rank[1] + ")" : (buff !== kind.buffs[0] ? " (" + buff + ")" : "")),
+				name: dotName(kind, buff, rank),
 				basePct: pb.tickPct, talentPct: talentPct, ticks: pb.ticks, maxStacks: pb.stacks + (tal.dotStacks[buff] || 0),
 				poison: !!kind.poison, lifesteal: !!kind.lifesteal, source: kind.source,
 				perTick: perTick, perStackTotal: perTick * pb.ticks
@@ -830,22 +841,18 @@
 		return (info.target === "MeleeCombo" || info.target === "ProjectileCombo") && third;
 	}
 
+	// Skills that put their buff on the whole party, not only the caster (Empyrean Aura).
+	var PARTY_TARGET = /Friend|Group/;
+
 	/*
-	 * Plays a combo on loop for `windowS` seconds against one target. Debuffs from earlier
-	 * steps (Armor Bane, Armor Breaker, Scorch, curses, slows, stuns) boost later hits, DoT
-	 * stacks build, refresh and tick once a second, and conditional talents switch on when
-	 * their target state is present. Buffs on yourself (Berserker, Chaos Wave, Ghost Blade)
-	 * and basic-attack overrides (Cleaving Blows, Verdict, Sentinel Form, Pyromania, Meteor)
-	 * apply for their duration. Crits use the average multiplier. Attack speed only speeds
-	 * up basic attacks, as in the game. Mana is not limited; cooldowns are waited out with
-	 * basic attacks.
+	 * Schedules one character's combo on loop for the fight: when each hit lands, when each
+	 * debuff, DoT or buff goes on, and the cast-by-cast timeline. Damage is worked out later,
+	 * once every member's events are known (see simulateParty). Mana is tracked when
+	 * `limited`; a skill on cooldown is skipped until it is ready, as a player would.
 	 */
-	function simulateCombo(steps, env, windowS, manaLimited) {
-		var D = data();
-		var limited = !!manaLimited;
+	function scheduleCaster(steps, env, W, limited, ci, push) {
 		var mp = MANA_MAX;
 		var mmp = MASTER_MANA_MAX;
-		var W = Math.max(5, Math.min(120, windowS || DEFAULT_WINDOW_S)) * 1000;
 		var basicSpeed = 1 + Math.max(-0.5, env.attackSpeed);
 		var byKey = {};
 		env.abilities.forEach(function (a) { byKey[a.ability] = a; });
@@ -857,14 +864,10 @@
 		var names = { basic: env.basic.name };
 		env.abilities.forEach(function (a) { names[a.ability] = a.name; });
 
-		var events = [];
-		var seqNo = 0;
-		function push(ev) { ev.seq = seqNo++; events.push(ev); }
-
 		// Buffs on yourself, as time intervals; a recast refreshes rather than stacks.
 		var selfIv = [];
-		function addSelf(sb, at, source) {
-			if (sb.stealth) { push({ t: at, type: "stealth", key: source }); return; }
+		function addSelf(sb, at, source, party) {
+			if (sb.stealth) { push({ t: at, c: ci, type: "stealth", key: source }); return; }
 			var dur = sb.durationMs ? sb.durationMs + env.buffTime(sb.buff) : Infinity;
 			for (var i = selfIv.length - 1; i >= 0; i--) {
 				var iv = selfIv[i];
@@ -874,7 +877,7 @@
 					return;
 				}
 			}
-			selfIv.push({ start: at, end: at + dur, castAt: at, sb: sb, source: source });
+			selfIv.push({ start: at, end: at + dur, castAt: at, sb: sb, source: source, party: !!party });
 		}
 		// The most recently cast override is the one your basic attacks use.
 		function overrideAt(at) {
@@ -884,16 +887,6 @@
 				if (o && iv.start <= at && at < iv.end && iv.castAt <= at && (!best || iv.castAt >= best.castAt)) best = { castAt: iv.castAt, info: o, source: iv.source };
 			});
 			return best;
-		}
-		// Attack buffs count for hits after they start; Expertise buffs for DoTs applied from that moment.
-		function selfMods(at) {
-			var m = { melee: 0, magic: 0 };
-			selfIv.forEach(function (iv) {
-				if (at >= iv.end) return;
-				if (iv.start < at) m.melee += iv.sb.melee || 0;
-				if (iv.start <= at) m.magic += iv.sb.magic || 0;
-			});
-			return m;
 		}
 
 		var chain = 0;   // position in the 3-hit basic chain; using a skill restarts it
@@ -913,11 +906,11 @@
 			var third = chain % 3 === 2;
 			var add = env.runes.multAdd[baseName(info.power)] || 0;
 			info.mults.forEach(function (m, i) {
-				push({ t: at + (info.hitAt[i] || 0) / basicSpeed, type: "hit", key: key, mult: m + add, crit: basicCanCrit(info, third) });
+				push({ t: at + (info.hitAt[i] || 0) / basicSpeed, c: ci, type: "hit", key: key, mult: m + add, crit: basicCanCrit(info, third) });
 			});
 			applicationsOf(info, env.runes).forEach(function (ev) {
 				if (info.apply && info.apply.rule === "third" && !third) return;
-				push({ t: at + ev.at / basicSpeed, type: "buffs", key: key, dots: ev.dots, debuffs: ev.debuffs });
+				push({ t: at + ev.at / basicSpeed, c: ci, type: "buffs", key: key, dots: ev.dots, debuffs: ev.debuffs });
 			});
 			chain++;
 			return { ms: Math.max(MIN_STEP_MS, info.busyMs || 0) / basicSpeed, key: key, override: !!ov };
@@ -937,11 +930,11 @@
 			parts.forEach(function (p) {
 				var add = env.runes.multAdd[baseName(p.power)] || 0;
 				p.mults.forEach(function (m, i) {
-					push({ t: start + (p.hitAt[i] || 0), type: "hit", key: a.ability, mult: m + add, crit: !p.noCrit, harmony: harmony });
+					push({ t: start + (p.hitAt[i] || 0), c: ci, type: "hit", key: a.ability, mult: m + add, crit: !p.noCrit, harmony: harmony });
 				});
 				var dcount = {}, bcount = {};
 				applicationsOf(p, env.runes, hallowedExtra(a, r, p)).forEach(function (ev) {
-					push({ t: start + ev.at, type: "buffs", key: a.ability, dots: ev.dots, debuffs: ev.debuffs });
+					push({ t: start + ev.at, c: ci, type: "buffs", key: a.ability, dots: ev.dots, debuffs: ev.debuffs });
 					Object.keys(ev.dots).forEach(function (b) { dcount[b] = (dcount[b] || 0) + ev.dots[b]; });
 					Object.keys(ev.debuffs).forEach(function (b) { bcount[b] = (bcount[b] || 0) + ev.debuffs[b]; });
 				});
@@ -950,7 +943,11 @@
 					var d = env.dot(b);
 					if (d) label(d.kindName + " ×" + Math.min(dcount[b], d.maxStacks));
 				});
-				(p.self || []).forEach(function (sb) { addSelf(sb, start + (p.selfAt || 0), a.ability); label(selfLabel(sb)); });
+				var party = PARTY_TARGET.test(p.target || "");
+				(p.self || []).forEach(function (sb) {
+					addSelf(sb, start + (p.selfAt || 0), a.ability, party && (sb.melee || sb.magic));
+					label(selfLabel(sb) + (party && (sb.melee || sb.magic) ? " (whole party)" : ""));
+				});
 				if (locksCaster(p)) start += p.busyMs || 0;
 			});
 			chain = 0;
@@ -970,6 +967,7 @@
 		var noMana = {};
 		var manaWaitMs = 0;
 		var timeline = [];
+		var castLog = [];   // every skill cast in the fight, for party timelines
 		var guard = 0;
 		var END = W - 1e-6;   // ignore float drift when steps add up to exactly the window
 		while (t < END && guard++ < 4000) {
@@ -1021,6 +1019,7 @@
 				}
 				if (r.cooldownMs) cooldownReady[st.key] = t + r.cooldownMs;
 				castCount[st.key] = (castCount[st.key] || 0) + 1;
+				castLog.push({ key: st.key, start: t, ms: dur, master: st.ability.hotbar >= 4 });
 				t += dur;
 				casts++;
 			}
@@ -1034,52 +1033,111 @@
 			if (loops === 1) firstPassMs = t;
 		}
 
+		return {
+			env: env, names: names, selfIv: selfIv, timeline: timeline, castLog: castLog, loops: loops, casts: casts, waitMs: waitMs,
+			firstPassMs: firstPassMs, mana: mana, masterMana: masterMana, castCount: castCount, skipped: skipped,
+			noMana: noMana, manaWaitMs: manaWaitMs
+		};
+	}
+
+	/*
+	 * Plays every member's combo on loop for `windowS` seconds against one shared target.
+	 * Debuffs from earlier steps, by anyone (Armor Bane, Armor Breaker, Scorch, curses, slows,
+	 * stuns), boost later hits from everyone; DoT stacks build, refresh and tick once a second
+	 * (each member's own); conditional talents switch on when the target state is present,
+	 * whoever put it there. Buffs on yourself (Berserker, Chaos Wave, Ghost Blade) and
+	 * basic-attack overrides (Cleaving Blows, Verdict, Sentinel Form, Pyromania, Meteor) apply
+	 * for their duration, and buffs a skill gives the whole party (Empyrean Aura) count for
+	 * every member. Crits use the average multiplier. Attack speed only speeds up basic attacks,
+	 * as in the game.
+	 *
+	 * members: [{ steps, env }] where env comes from compute(). Returns null when nobody has
+	 * a playable step; a member without one deals no damage (members[i] is null).
+	 */
+	function simulateParty(members, windowS, manaLimited) {
+		var D = data();
+		var limited = !!manaLimited;
+		var W = Math.max(5, Math.min(120, windowS || DEFAULT_WINDOW_S)) * 1000;
+		var events = [];
+		var seqNo = 0;
+		function push(ev) { ev.seq = seqNo++; events.push(ev); }
+		var casters = (members || []).map(function (m, ci) { return m && m.env ? scheduleCaster(m.steps, m.env, W, limited, ci, push) : null; });
+		if (!casters.some(Boolean)) return null;
+
 		var PRIORITY = { hit: 0, buffs: 1, stealth: 2 };
 		events.sort(function (a, b) { return a.t - b.t || PRIORITY[a.type] - PRIORITY[b.type] || a.seq - b.seq; });
 
-		// Target state while the combo plays.
+		// Attack buffs count for hits after they start; Expertise buffs for DoTs applied from
+		// that moment. A member gets their own buffs and the party-wide ones of everyone.
+		function selfMods(at, c) {
+			var m = { melee: 0, magic: 0 };
+			var seenBuff = {};
+			casters.forEach(function (cs, k) {
+				if (!cs) return;
+				cs.selfIv.forEach(function (iv) {
+					if (k !== c && !iv.party) return;
+					if (at >= iv.end) return;
+					var counted = seenBuff[iv.sb.buff];
+					if (counted && counted !== k + 1) return;   // the same buff from two members counts once
+					if (iv.start < at || iv.start <= at) seenBuff[iv.sb.buff] = k + 1;
+					if (iv.start < at) m.melee += iv.sb.melee || 0;
+					if (iv.start <= at) m.magic += iv.sb.magic || 0;
+				});
+			});
+			return m;
+		}
+
+		// Target state while the fight plays, shared by the whole party.
 		var meta = D.targetBuffs || {};
-		var debuffs = {};   // name -> { stacks, expiry }
-		var dots = {};      // buff -> { stacks: [{ src, mult }], expiry, next }
-		var critTimes = [];
-		var bySkill = {};
-		var byType = {};
+		var debuffs = {};   // name -> { stacks, expiry, by }
+		var dots = casters.map(function () { return {}; });   // per member: buff -> { stacks: [{ src, mult }], expiry, next }
+		var per = casters.map(function (cs) {
+			return cs ? {
+				bySkill: {}, byType: {}, total: 0, critTimes: [],
+				permStealth: !!cs.env.selfConds.stealth, stealthOn: false, stealthHitT: -1,
+				etherealPct: condPctSum(cs.env.tal, "expertise", { stealth: true })
+			} : null;
+		});
+		var partyTypes = {};
 		var total = 0;
-		var permStealth = !!env.selfConds.stealth;
-		var stealthOn = false;
-		var stealthHitT = -1;
-		var etherealPct = condPctSum(env.tal, "expertise", { stealth: true });
 		var samples = {};
 		var sampleCount = 0;
 		var nextSample = 0;
 
-		function credit(key, field, amount) {
-			if (!bySkill[key]) bySkill[key] = { key: key, direct: 0, crit: 0, dot: 0 };
-			bySkill[key][field] += amount;
+		function credit(c, key, field, amount) {
+			var p = per[c];
+			if (!p.bySkill[key]) p.bySkill[key] = { key: key, direct: 0, crit: 0, dot: 0 };
+			p.bySkill[key][field] += amount;
+			p.total += amount;
 			total += amount;
 		}
-		function addType(label, amount) { byType[label] = (byType[label] || 0) + amount; }
+		function addType(c, label, amount) {
+			per[c].byType[label] = (per[c].byType[label] || 0) + amount;
+			partyTypes[label] = (partyTypes[label] || 0) + amount;
+		}
 		function active(name, at) { var d = debuffs[name]; return d && d.expiry > at && d.stacks > 0 ? d : null; }
 
-		function targetConds(at) {
-			var c = Object.assign({}, env.selfConds);
+		function targetConds(at, c) {
+			var cd = Object.assign({}, casters[c].env.selfConds);
 			Object.keys(debuffs).forEach(function (name) {
 				if (!active(name, at)) return;
 				var m = meta[name] || {};
-				if (name === "Cursed" || name === "MinorCurse") c.cursed = true;
-				if (m.speed < 0 || /Frozen|Rooted|Stunned/.test(m.effect || "")) c.slowed = true;
-				if (/Stunned/.test(m.effect || "") || name === "Staggered" || /^Warcry/.test(name)) c.stunned = true;
-				if (/Frozen/.test(m.effect || "")) c.frozen = true;
+				if (name === "Cursed" || name === "MinorCurse") cd.cursed = true;
+				if (m.speed < 0 || /Frozen|Rooted|Stunned/.test(m.effect || "")) cd.slowed = true;
+				if (/Stunned/.test(m.effect || "") || name === "Staggered" || /^Warcry/.test(name)) cd.stunned = true;
+				if (/Frozen/.test(m.effect || "")) cd.frozen = true;
 			});
-			Object.keys(dots).forEach(function (b) {
-				var d = dots[b];
-				if (!d.stacks.length || d.expiry <= at) return;
-				if (b === "Bleeding") c.bleeding = true;
-				if (b === "Bound") c.bound = true;
-				if (b === "Ignite") c.ignited = true;
-				if (b === "HailstoneRoot") c.slowed = true;
+			dots.forEach(function (dm) {
+				Object.keys(dm).forEach(function (b) {
+					var d = dm[b];
+					if (!d.stacks.length || d.expiry <= at) return;
+					if (b === "Bleeding") cd.bleeding = true;
+					if (b === "Bound") cd.bound = true;
+					if (b === "Ignite") cd.ignited = true;
+					if (b === "HailstoneRoot") cd.slowed = true;
+				});
 			});
-			return c;
+			return cd;
 		}
 
 		function targetDebuffs(at) {
@@ -1116,14 +1174,16 @@
 					if (!label) return;
 					var x = seen[label] || (seen[label] = { stacks: 0, max: false, dot: false });
 					x.stacks += d.stacks;
-					x.max = x.max || stackCap(name, env.tal) > 1;
+					x.max = x.max || stackCap(name, casters[d.by].env.tal) > 1;
 				});
-				Object.keys(dots).forEach(function (b) {
-					var d = dots[b];
-					if (!d.stacks.length || d.expiry <= at) return;
-					var label = env.dot(b).kindName;
-					var x = seen[label] || (seen[label] = { stacks: 0, max: true, dot: true });
-					x.stacks += d.stacks.length;
+				dots.forEach(function (dm, k) {
+					Object.keys(dm).forEach(function (b) {
+						var d = dm[b];
+						if (!d.stacks.length || d.expiry <= at) return;
+						var label = casters[k].env.dot(b).kindName;
+						var x = seen[label] || (seen[label] = { stacks: 0, max: true, dot: true });
+						x.stacks += d.stacks.length;
+					});
 				});
 				Object.keys(seen).forEach(function (label) {
 					var s = samples[label] || (samples[label] = { on: 0, stacks: 0, max: false, dot: false });
@@ -1137,22 +1197,25 @@
 		}
 
 		function advanceDots(to) {
-			Object.keys(dots).forEach(function (b) {
-				var d = dots[b];
-				var base = env.dot(b);
-				while (d.stacks.length && d.next <= to && d.next <= W && d.next <= d.expiry) {
-					var conds = targetConds(d.next);
-					var vs = dotVsMult(env.tal, b, conds).mult;
-					var tick = 0;
-					d.stacks.forEach(function (s) {
-						var amt = base.perTick * s.mult * vs;
-						credit(s.src, "dot", amt);
-						tick += amt;
-					});
-					addType(base.kindName, tick);
-					removeOnDamage(d.next);
-					d.next += DOT_TICK_MS;
-				}
+			dots.forEach(function (dm, k) {
+				var env = casters[k] && casters[k].env;
+				Object.keys(dm).forEach(function (b) {
+					var d = dm[b];
+					var base = env.dot(b);
+					while (d.stacks.length && d.next <= to && d.next <= W && d.next <= d.expiry) {
+						var conds = targetConds(d.next, k);
+						var vs = dotVsMult(env.tal, b, conds).mult;
+						var tick = 0;
+						d.stacks.forEach(function (s) {
+							var amt = base.perTick * s.mult * vs;
+							credit(k, s.src, "dot", amt);
+							tick += amt;
+						});
+						addType(k, base.kindName, tick);
+						removeOnDamage(d.next);
+						d.next += DOT_TICK_MS;
+					}
+				});
 			});
 		}
 
@@ -1160,43 +1223,47 @@
 			if (ev.t > W) return;
 			sampleUntil(ev.t);
 			advanceDots(ev.t);
-			if (ev.type === "stealth") { stealthOn = true; return; }
+			var c = ev.c;
+			var env = casters[c].env;
+			var p = per[c];
+			if (ev.type === "stealth") { p.stealthOn = true; return; }
 			if (ev.type === "hit") {
-				var conds = targetConds(ev.t);
-				if (permStealth || stealthOn) conds.stealth = true;
+				var conds = targetConds(ev.t, c);
+				if (p.permStealth || p.stealthOn) conds.stealth = true;
 				if (ev.harmony) conds.afterMaster = true;
 				var deb = targetDebuffs(ev.t);
 				if (env.crit.hasHemorrhage && env.tal.hemoDebuff) {
-					critTimes = critTimes.filter(function (x) { return x > ev.t - HEMORRHAGE_MS; });
-					deb.hemoUptime = 1 - Math.pow(1 - env.crit.chance(conds), critTimes.length);
+					p.critTimes = p.critTimes.filter(function (x) { return x > ev.t - HEMORRHAGE_MS; });
+					deb.hemoUptime = 1 - Math.pow(1 - env.crit.chance(conds), p.critTimes.length);
 				}
-				var mods = selfMods(ev.t);
+				var mods = selfMods(ev.t, c);
 				var hit = env.attack * (1 + mods.melee) * ev.mult * directMultiplier(env, conds, deb);
 				var factor = ev.crit ? env.crit.factor(conds) : 1;
-				credit(ev.key, "direct", hit);
-				addType("Direct hits", hit);
+				credit(c, ev.key, "direct", hit);
+				addType(c, "Direct hits", hit);
 				if (factor > 1) {
-					credit(ev.key, "crit", hit * (factor - 1));
-					addType("Critical hits", hit * (factor - 1));
+					credit(c, ev.key, "crit", hit * (factor - 1));
+					addType(c, "Critical hits", hit * (factor - 1));
 				}
-				if (ev.crit) critTimes.push(ev.t);
+				if (ev.crit) p.critTimes.push(ev.t);
 				removeOnDamage(ev.t);
-				if (stealthOn) { stealthOn = false; stealthHitT = ev.t; }
+				if (p.stealthOn) { p.stealthOn = false; p.stealthHitT = ev.t; }
 				return;
 			}
-			var stealthed = !permStealth && (stealthOn || stealthHitT === ev.t);
-			var dotMult = (1 + selfMods(ev.t).magic) * (stealthed ? 1 + etherealPct : 1);
+			var stealthed = !p.permStealth && (p.stealthOn || p.stealthHitT === ev.t);
+			var dotMult = (1 + selfMods(ev.t, c).magic) * (stealthed ? 1 + p.etherealPct : 1);
 			Object.keys(ev.debuffs).forEach(function (name) {
 				var m = meta[name] || { durationMs: 5000, stacks: 1 };
 				var cur = active(name, ev.t);
 				var dur = (m.durationMs || 5000) + env.buffTime(name);
-				debuffs[name] = { stacks: Math.min(stackCap(name, env.tal), (cur ? cur.stacks : 0) + ev.debuffs[name]), expiry: ev.t + dur };
+				debuffs[name] = { stacks: Math.min(stackCap(name, env.tal), (cur ? cur.stacks : 0) + ev.debuffs[name]), expiry: ev.t + dur, by: c };
 			});
 			Object.keys(ev.dots).forEach(function (b) {
 				var base = env.dot(b);
 				if (!base) return;
-				var d = dots[b];
-				if (!d || !d.stacks.length || d.expiry <= ev.t) d = dots[b] = { stacks: [], expiry: 0, next: ev.t + DOT_TICK_MS };
+				var dm = dots[c];
+				var d = dm[b];
+				if (!d || !d.stacks.length || d.expiry <= ev.t) d = dm[b] = { stacks: [], expiry: 0, next: ev.t + DOT_TICK_MS };
 				for (var k = 0; k < ev.dots[b]; k++) {
 					d.stacks.push({ src: ev.key, mult: dotMult });
 					if (d.stacks.length > base.maxStacks) d.stacks.shift();
@@ -1207,29 +1274,97 @@
 		sampleUntil(W);
 		advanceDots(W);
 
-		var skills = Object.keys(bySkill).map(function (k) {
-			var s = bySkill[k];
-			s.name = names[k] || k;
-			s.casts = k === "basic" ? 0 : (castCount[k] || 0);
-			s.total = s.direct + s.crit + s.dot;
-			s.share = total ? s.total / total : 0;
-			return s;
-		}).sort(function (a, b) { return b.total - a.total; });
-		var types = Object.keys(byType).map(function (k) { return { label: k, amount: byType[k], share: total ? byType[k] / total : 0, dot: k !== "Direct hits" && k !== "Critical hits" }; })
-			.sort(function (a, b) { return b.amount - a.amount; });
+		var secsW = W / 1000;
 		var uptime = Object.keys(samples).map(function (k) {
 			var s = samples[k];
 			return { label: k, pct: sampleCount ? s.on / sampleCount : 0, avgStacks: s.max && s.on ? s.stacks / s.on : 0, dot: !!s.dot };
 		}).sort(function (a, b) { return b.pct - a.pct; });
-		var dotTotal = types.reduce(function (a, x) { return a + (x.dot ? x.amount : 0); }, 0);
-		return {
-			windowS: W / 1000, total: total, dps: total / (W / 1000), loops: loops, casts: casts,
-			firstPassMs: firstPassMs, waitMs: waitMs, mana: mana, masterMana: masterMana, timeline: timeline,
-			skipped: Object.keys(skipped).map(function (k) { return { key: k, name: names[k] || k, times: skipped[k] }; }),
-			noMana: Object.keys(noMana).map(function (k) { return { key: k, name: names[k] || k, times: noMana[k] }; }),
-			manaLimited: limited, manaWaitMs: manaWaitMs,
-			skills: skills, types: types, uptime: uptime, dotShare: total ? dotTotal / total : 0
-		};
+		function typeList(map, sum) {
+			return Object.keys(map).map(function (k) { return { label: k, amount: map[k], share: sum ? map[k] / sum : 0, dot: k !== "Direct hits" && k !== "Critical hits" }; })
+				.sort(function (a, b) { return b.amount - a.amount; });
+		}
+
+		var out = casters.map(function (cs, c) {
+			if (!cs) return null;
+			var p = per[c];
+			var skills = Object.keys(p.bySkill).map(function (k) {
+				var s = p.bySkill[k];
+				s.name = cs.names[k] || k;
+				s.casts = k === "basic" ? 0 : (cs.castCount[k] || 0);
+				s.total = s.direct + s.crit + s.dot;
+				s.share = p.total ? s.total / p.total : 0;
+				return s;
+			}).sort(function (a, b) { return b.total - a.total; });
+			var types = typeList(p.byType, p.total);
+			var dotTotal = types.reduce(function (a, x) { return a + (x.dot ? x.amount : 0); }, 0);
+			return {
+				windowS: secsW, total: p.total, dps: p.total / secsW, loops: cs.loops, casts: cs.casts,
+				firstPassMs: cs.firstPassMs, waitMs: cs.waitMs, mana: cs.mana, masterMana: cs.masterMana, timeline: cs.timeline,
+				castLog: cs.castLog.map(function (x) { return { key: x.key, name: cs.names[x.key] || x.key, start: x.start, ms: x.ms, master: x.master }; }),
+				skipped: Object.keys(cs.skipped).map(function (k) { return { key: k, name: cs.names[k] || k, times: cs.skipped[k] }; }),
+				noMana: Object.keys(cs.noMana).map(function (k) { return { key: k, name: cs.names[k] || k, times: cs.noMana[k] }; }),
+				manaLimited: limited, manaWaitMs: cs.manaWaitMs,
+				skills: skills, types: types, uptime: uptime, dotShare: p.total ? dotTotal / p.total : 0,
+				partyBuffs: cs.selfIv.filter(function (iv) { return iv.party; }).map(function (iv) { return cs.names[iv.source] || iv.source; })
+					.filter(function (v, i, a) { return a.indexOf(v) === i; })
+			};
+		});
+		return { windowS: secsW, total: total, dps: total / secsW, members: out, types: typeList(partyTypes, total), uptime: uptime, manaLimited: limited };
+	}
+
+	// One character on its own: a party of one.
+	function simulateCombo(steps, env, windowS, manaLimited) {
+		var r = simulateParty([{ steps: steps, env: env }], windowS, manaLimited);
+		return r ? r.members[0] : null;
+	}
+
+	/*
+	 * Picks one combo per member for the most party damage. options: [{ env, choices: [{ id,
+	 * steps }] }]. Tries every combination when there are few enough; otherwise improves one
+	 * member at a time until nothing changes. Returns { pick: [choice index per member], total,
+	 * evaluated }.
+	 */
+	function optimizeParty(options, windowS, manaLimited, maxEvals) {
+		var limit = maxEvals || 400;
+		var opts = options.map(function (o) { return { env: o.env, choices: o.choices && o.choices.length ? o.choices : [{ id: "", steps: [] }] }; });
+		var evaluated = 0;
+		var cache = {};
+		function score(pick) {
+			var key = pick.join(",");
+			if (Object.prototype.hasOwnProperty.call(cache, key)) return cache[key];
+			evaluated++;
+			var r = simulateParty(opts.map(function (o, i) { return { steps: o.choices[pick[i]].steps, env: o.env }; }), windowS, manaLimited);
+			return (cache[key] = r ? r.total : 0);
+		}
+		var count = opts.reduce(function (n, o) { return n * o.choices.length; }, 1);
+		var best = opts.map(function () { return 0; });
+		var bestScore = score(best);
+		if (count <= limit) {
+			var pick = best.slice();
+			for (var n = 0; n < count; n++) {
+				var rest = n;
+				for (var i = 0; i < opts.length; i++) {
+					pick[i] = rest % opts[i].choices.length;
+					rest = Math.floor(rest / opts[i].choices.length);
+				}
+				var s = score(pick);
+				if (s > bestScore + 1e-9) { bestScore = s; best = pick.slice(); }
+			}
+		} else {
+			for (var round = 0; round < 6; round++) {
+				var improved = false;
+				for (var m = 0; m < opts.length; m++) {
+					for (var ch = 0; ch < opts[m].choices.length; ch++) {
+						var trial = best.slice();
+						trial[m] = ch;
+						var ts = score(trial);
+						if (ts > bestScore + 1e-9) { bestScore = ts; best = trial; improved = true; }
+					}
+				}
+				if (!improved) break;
+			}
+		}
+		return { pick: best, total: bestScore, evaluated: evaluated };
 	}
 
 	/* ---------------- main ---------------- */
@@ -1388,8 +1523,11 @@
 			combos: combos, comboWindow: windowS, basicAttack: { name: comboEnv.basic.name, ranged: comboEnv.basic.ranged },
 			abilities: abilities.map(function (a) {
 				var r = rankOf(a, rank);
-				return { ability: a.ability, name: a.name, hotbar: a.hotbar, castMs: stepTime(a, rank), cooldownMs: r.cooldownMs || 0 };
+				return { ability: a.ability, name: a.name, hotbar: a.hotbar, castMs: stepTime(a, rank), cooldownMs: r.cooldownMs || 0,
+					mana: r.mana || 0, masterMana: !!r.masterMana, desc: a.desc || "", party: PARTY_TARGET.test(r.target || "") };
 			}),
+			// Everything simulateParty needs to play this character in a party.
+			env: comboEnv,
 			scorchMax: SCORCH_BASE_MAX + tal.scorchStacks,
 			conditionsUsed: used, charmSlots: SLOTS_TOTAL
 		};
@@ -1402,8 +1540,10 @@
 		CONDITIONS: CONDITIONS, SELF_CONDITIONS: SELF_CONDITIONS, OPPOSITE: OPPOSITE, SLOTS_TOTAL: SLOTS_TOTAL,
 		ARMOR_BREAKS: ARMOR_BREAKS, ARMOR_BANE_MAX: ARMOR_BANE_MAX, SCORCH_BASE_MAX: SCORCH_BASE_MAX,
 		RETRIBUTION: RETRIBUTION, DEFAULT_WINDOW_S: DEFAULT_WINDOW_S,
+		simulateParty: simulateParty, optimizeParty: optimizeParty,
 		MANA_MAX: MANA_MAX, MASTER_MANA_MAX: MASTER_MANA_MAX, MASTER_MANA_RATIO: MASTER_MANA_RATIO,
 		// For tools/check_engine.js.
+		debuffLabel: debuffLabel,
 		_internal: { simulateCombo: simulateCombo, makeDotBase: makeDotBase }
 	};
 })(typeof window !== "undefined" ? window : globalThis);

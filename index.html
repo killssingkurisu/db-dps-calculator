@@ -4,12 +4,12 @@
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 	<title>Dungeon Blitz DPS Calculator</title>
-	<meta name="description" content="Dungeon Blitz DPS Calculator: plan level 50 builds with talents, gear, runes and charms, and see stats, skill damage and combo DPS with its damage distribution.">
+	<meta name="description" content="Dungeon Blitz DPS Calculator: plan level 50 builds with talents, gear, runes and charms, import your gear from the game, and work out solo and party combo DPS.">
 	<link rel="shortcut icon" href="favicon.ico">
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:ital,wght@0,400;0,500;0,700;1,400&family=Grenze:wght@600;700&display=swap">
-	<link rel="stylesheet" href="app/app.css?v=5">
+	<link rel="stylesheet" href="app/app.css?v=6">
 	<script>
 		// Pop-out combo window: style it before first paint.
 		if (/[?&]view=combos(&|$)/.test(location.search)) document.documentElement.className += " popout";
@@ -23,124 +23,50 @@
 	<script src="talents/js/templar-data.js?v=2"></script>
 	<script src="app/data/game-data.js?v=4"></script>
 	<script src="app/combos.js?v=2"></script>
-	<script src="app/engine.js?v=7"></script>
-	<script src="app/library.js?v=2"></script>
-	<script src="app/drive.js?v=1" defer></script>
-	<script src="app/app.js?v=7" defer></script>
+	<script src="app/engine.js?v=8"></script>
+	<script src="app/library.js?v=3"></script>
+	<script src="app/drive.js?v=2" defer></script>
+	<script src="app/app.js?v=8" defer></script>
 </head>
 <body>
-	<header class="topbar">
-		<div class="topbar-inner">
-			<h1 class="brand"><span class="brand-game">Dungeon Blitz</span> DPS Calculator</h1>
-			<label class="field field-inline discipline-field">
-				<span class="field-label">Discipline</span>
-				<select id="discipline"></select>
-			</label>
-			<span class="popout-discipline" id="popout-discipline"></span>
-			<div class="topbar-actions">
-				<div class="cloud" id="cloud"></div>
-				<label class="field field-inline">
-					<span class="field-label">Compare with</span>
-					<select id="compare-select"><option value="">Nothing</option></select>
-				</label>
-				<button type="button" class="btn" id="copy-link">Copy link</button>
-				<span class="toast" id="toast" role="status" aria-live="polite"></span>
+	<header class="appbar">
+		<div class="appbar-inner">
+			<a class="brand" href="./"><span class="brand-game">Dungeon Blitz</span> DPS Calculator</a>
+			<nav class="tabbar" role="tablist" aria-label="Sections">
+				<button type="button" role="tab" id="tab-character" aria-controls="panel-character" data-tab="character">Character</button>
+				<button type="button" role="tab" id="tab-gears" aria-controls="panel-gears" data-tab="gears">Gears</button>
+				<button type="button" role="tab" id="tab-talents" aria-controls="panel-talents" data-tab="talents">Talents</button>
+				<button type="button" role="tab" id="tab-combos" aria-controls="panel-combos" data-tab="combos">Combos</button>
+				<button type="button" role="tab" id="tab-party" aria-controls="panel-party" data-tab="party">Party</button>
+				<button type="button" role="tab" id="tab-import" aria-controls="panel-import" data-tab="import">Import</button>
+				<button type="button" role="tab" id="tab-settings" aria-controls="panel-settings" data-tab="settings">Settings</button>
+			</nav>
+			<div class="appbar-tools">
+				<button type="button" class="sync-chip" id="sync-chip" hidden></button>
+				<button type="button" class="btn btn-small" id="copy-link">Copy link</button>
+				<a class="btn btn-small popout-only" id="full-link" href="./">Full calculator</a>
 			</div>
 		</div>
+		<div class="partybar" id="partybar" aria-label="Party"></div>
+		<span class="toast" id="toast" role="status" aria-live="polite"></span>
 	</header>
 
 	<main class="page">
-		<section class="panel talents-panel" aria-labelledby="talents-title">
-			<div class="panel-head">
-				<h2 id="talents-title">Talents</h2>
-				<p class="panel-note">Socket talentstones here. Their bonuses flow into the character sheet and the combo DPS.</p>
-			</div>
-			<div class="talents-frame-wrap">
-				<iframe id="talents-frame" title="Talent calculator"></iframe>
-			</div>
-		</section>
-
-		<div class="workbench">
-			<div class="inputs">
-				<section class="panel" aria-labelledby="gear-title">
-					<div class="panel-head">
-						<h2 id="gear-title">Gear</h2>
-						<div class="segmented" role="radiogroup" aria-label="How to enter gear Attack, Expertise and Defense">
-							<button type="button" role="radio" data-gear-mode="pieces">From gear pieces</button>
-							<button type="button" role="radio" data-gear-mode="totals">Enter totals</button>
+		<!-- Character: who this is and what the numbers come to -->
+		<section class="tabpanel" id="panel-character" role="tabpanel" aria-labelledby="tab-character">
+			<div class="cols">
+				<div class="col">
+					<section class="panel char-head" aria-labelledby="char-title">
+						<div class="panel-head">
+							<h2 id="char-title">Character</h2>
+							<p class="panel-note" id="sheet-sub"></p>
 						</div>
-					</div>
-					<p class="panel-note" id="gear-note"></p>
-					<div class="gear-totals" id="gear-totals"></div>
-					<div class="gear-grid" id="gear-grid"></div>
-				</section>
-
-				<section class="panel inventory-panel" id="inventory-panel" aria-labelledby="inv-title">
-					<div class="panel-head">
-						<h2 id="inv-title">Scanned gear</h2>
-						<div class="panel-tools">
-							<button type="button" class="btn btn-small" id="inv-import">Import scan file</button>
-							<button type="button" class="btn btn-small" id="inv-paste">Paste scan</button>
-							<input type="file" id="inv-file" accept=".json,application/json" hidden>
-						</div>
-					</div>
-					<div id="inventory-body"></div>
-				</section>
-
-				<section class="panel" aria-labelledby="charms-title">
-					<div class="panel-head">
-						<h2 id="charms-title">Charms</h2>
-						<p class="panel-note" id="charm-count"></p>
-					</div>
-					<div class="charm-list" id="charm-list"></div>
-				</section>
-
-				<section class="panel" aria-labelledby="extra-title">
-					<div class="panel-head">
-						<h2 id="extra-title">Other bonuses</h2>
-						<p class="panel-note">Pets, buffs or anything else, added on top.</p>
-					</div>
-					<div class="field-grid" id="extra-fields"></div>
-				</section>
-
-				<section class="panel" aria-labelledby="target-title">
-					<div class="panel-head">
-						<h2 id="target-title">Target and situation</h2>
-					</div>
-					<div class="field-grid" id="target-fields"></div>
-					<p class="panel-note target-note">Armor Bane, Armor Breaker and Scorch set here apply to the skill damage list. Combos put up their own debuffs as they play.</p>
-					<div class="situations" id="situations"></div>
-				</section>
-
-				<section class="panel" aria-labelledby="builds-title">
-					<div class="panel-head">
-						<h2 id="builds-title">Saved builds</h2>
-						<p class="panel-note">Kept in this browser, and in your Google Drive when you sign in with Google. Pick one under “Compare with” to see the difference.</p>
-					</div>
-					<form class="save-form" id="save-form">
-						<label class="field">
-							<span class="field-label">Build name</span>
-							<input type="text" id="save-name" maxlength="60" autocomplete="off" placeholder="e.g. Bleed Viperblade">
-						</label>
-						<button type="submit" class="btn btn-primary">Save build</button>
-					</form>
-					<ul class="build-list" id="build-list"></ul>
-				</section>
-			</div>
-
-			<aside class="sheet" aria-label="Results">
-				<div class="sheet-tabs" role="tablist" aria-label="Results">
-					<button type="button" role="tab" id="tab-character" aria-controls="view-character" data-view="character">Character</button>
-					<button type="button" role="tab" id="tab-combos" aria-controls="view-combos" data-view="combos">Combo DPS</button>
-				</div>
-
-				<div class="sheet-view" id="view-character" role="tabpanel" aria-labelledby="tab-character">
-					<button type="button" class="best-combo" id="best-combo"></button>
+						<div class="field-grid" id="char-fields"></div>
+					</section>
 
 					<section class="panel" aria-labelledby="stats-title">
 						<div class="panel-head">
 							<h2 id="stats-title">Character sheet</h2>
-							<p class="panel-note" id="sheet-sub"></p>
 						</div>
 						<table class="stat-table" id="stat-table"></table>
 					</section>
@@ -151,6 +77,42 @@
 						</div>
 						<div id="crit-body"></div>
 					</section>
+
+					<section class="panel" aria-labelledby="extra-title">
+						<div class="panel-head">
+							<h2 id="extra-title">Other bonuses</h2>
+							<p class="panel-note">Pets, buffs or anything else, added on top.</p>
+						</div>
+						<div class="field-grid" id="extra-fields"></div>
+					</section>
+
+					<section class="panel" aria-labelledby="target-title">
+						<div class="panel-head">
+							<h2 id="target-title">Target and situation</h2>
+						</div>
+						<div class="field-grid" id="target-fields"></div>
+						<p class="panel-note target-note">Armor Bane, Armor Breaker and Scorch set here apply to the skill damage list. Combos put up their own debuffs as they play.</p>
+						<div class="situations" id="situations"></div>
+					</section>
+
+					<section class="panel" aria-labelledby="builds-title">
+						<div class="panel-head">
+							<h2 id="builds-title">Saved builds</h2>
+							<p class="panel-note">Kept in this browser, and in your Google Drive when you sign in (Settings).</p>
+						</div>
+						<form class="save-form" id="save-form">
+							<label class="field">
+								<span class="field-label">Build name</span>
+								<input type="text" id="save-name" maxlength="60" autocomplete="off" placeholder="e.g. Bleed Viperblade">
+							</label>
+							<button type="submit" class="btn btn-primary">Save build</button>
+						</form>
+						<ul class="build-list" id="build-list"></ul>
+					</section>
+				</div>
+
+				<div class="col">
+					<button type="button" class="best-combo" id="best-combo"></button>
 
 					<section class="panel" aria-labelledby="skills-title">
 						<div class="panel-head">
@@ -174,13 +136,6 @@
 						<div id="dots-body"></div>
 					</section>
 
-					<section class="panel" aria-labelledby="talent-fx-title">
-						<details class="disclosure">
-							<summary><h2 id="talent-fx-title">Talentstone effects</h2></summary>
-							<div id="talent-fx"></div>
-						</details>
-					</section>
-
 					<section class="panel" aria-labelledby="method-title">
 						<details class="disclosure">
 							<summary><h2 id="method-title">How the numbers are worked out</h2></summary>
@@ -188,35 +143,208 @@
 						</details>
 					</section>
 				</div>
+			</div>
+		</section>
 
-				<div class="sheet-view" id="view-combos" role="tabpanel" aria-labelledby="tab-combos" hidden>
-					<section class="panel combo-window" aria-labelledby="combo-title">
-						<div class="panel-head">
-							<h2 id="combo-title">Combo DPS</h2>
-							<div class="combo-tools">
-								<label class="field field-inline">
-									<span class="field-label">Fight length</span>
-									<select id="combo-length"></select>
-								</label>
-								<button type="button" class="btn btn-small" id="combo-popout">Open in new window</button>
-								<a class="btn btn-small popout-only" id="full-link" href="./">Full calculator</a>
-							</div>
-						</div>
-						<p class="panel-note" id="combo-intro"></p>
-						<div class="combo-list" id="combo-list" role="radiogroup" aria-label="Combos"></div>
-						<div class="combo-detail" id="combo-detail"></div>
-					</section>
+		<!-- Gears: what the character wears -->
+		<section class="tabpanel" id="panel-gears" role="tabpanel" aria-labelledby="tab-gears" hidden>
+			<section class="panel" aria-labelledby="gear-title">
+				<div class="panel-head">
+					<h2 id="gear-title">Gear</h2>
+					<div class="segmented" role="radiogroup" aria-label="How to enter gear Attack, Expertise and Defense">
+						<button type="button" role="radio" data-gear-mode="pieces">From gear pieces</button>
+						<button type="button" role="radio" data-gear-mode="totals">Enter totals</button>
+					</div>
+				</div>
+				<p class="panel-note" id="gear-note"></p>
+				<div class="gear-totals" id="gear-totals"></div>
+				<div class="gear-grid" id="gear-grid"></div>
+			</section>
 
-					<section class="panel" aria-labelledby="builder-title">
+			<div class="cols">
+				<div class="col">
+					<section class="panel" aria-labelledby="charms-title">
 						<div class="panel-head">
-							<h2 id="builder-title">Your combo</h2>
-							<p class="panel-note">Build a loop of your own; it shows up in the list above.</p>
+							<h2 id="charms-title">Charms</h2>
+							<p class="panel-note" id="charm-count"></p>
 						</div>
-						<div id="combo-builder"></div>
+						<div class="charm-list" id="charm-list"></div>
 					</section>
 				</div>
-			</aside>
-		</div>
+				<div class="col">
+					<section class="panel inventory-panel" id="inventory-panel" aria-labelledby="inv-title">
+						<div class="panel-head">
+							<h2 id="inv-title">Scanned gear</h2>
+							<div class="panel-tools" id="inv-tools"></div>
+						</div>
+						<div id="inventory-body"></div>
+					</section>
+				</div>
+			</div>
+		</section>
+
+		<!-- Talents: the tree, and what it adds -->
+		<section class="tabpanel" id="panel-talents" role="tabpanel" aria-labelledby="tab-talents" hidden>
+			<section class="panel talents-panel" aria-labelledby="talents-title">
+				<div class="panel-head">
+					<h2 id="talents-title">Talent tree</h2>
+					<p class="panel-note">Socket talentstones here. Their bonuses flow into the character sheet and every combo.</p>
+				</div>
+				<div class="talents-frame-wrap">
+					<iframe id="talents-frame" title="Talent calculator"></iframe>
+				</div>
+			</section>
+			<div class="cols">
+				<div class="col">
+					<section class="panel" aria-labelledby="inflow-title">
+						<div class="panel-head">
+							<h2 id="inflow-title">What your talents add</h2>
+							<p class="panel-note" id="inflow-sub"></p>
+						</div>
+						<div id="talent-inflow"></div>
+					</section>
+				</div>
+				<div class="col">
+					<section class="panel" aria-labelledby="talent-import-title">
+						<div class="panel-head">
+							<h2 id="talent-import-title">Bring in talents</h2>
+						</div>
+						<div id="talent-import"></div>
+					</section>
+					<section class="panel" aria-labelledby="talent-fx-title">
+						<div class="panel-head">
+							<h2 id="talent-fx-title">Talentstones socketed</h2>
+						</div>
+						<div id="talent-fx"></div>
+					</section>
+				</div>
+			</div>
+		</section>
+
+		<!-- Combos: one character's loop, or the whole party at once -->
+		<section class="tabpanel" id="panel-combos" role="tabpanel" aria-labelledby="tab-combos" hidden>
+			<div class="combos-bar">
+				<div class="segmented combo-scope" role="radiogroup" aria-label="Whose combo">
+					<button type="button" role="radio" data-combo-scope="character">Character</button>
+					<button type="button" role="radio" data-combo-scope="party">Party</button>
+				</div>
+				<div class="combos-bar-tools" id="combos-tools"></div>
+			</div>
+
+			<div id="combos-character">
+				<section class="panel combo-window" aria-labelledby="combo-title">
+					<div class="panel-head">
+						<h2 id="combo-title">Combo DPS</h2>
+					</div>
+					<p class="panel-note" id="combo-intro"></p>
+					<div class="combo-list" id="combo-list" role="radiogroup" aria-label="Combos"></div>
+					<div class="combo-detail" id="combo-detail"></div>
+				</section>
+
+				<section class="panel" aria-labelledby="builder-title">
+					<div class="panel-head">
+						<h2 id="builder-title">Build your combo</h2>
+						<p class="panel-note">Click skills in the order you cast them. It shows up in the list above as “Your combo”.</p>
+					</div>
+					<div id="combo-builder"></div>
+				</section>
+			</div>
+
+			<div id="combos-party" hidden>
+				<section class="panel combo-window" aria-labelledby="party-dps-title">
+					<div class="panel-head">
+						<h2 id="party-dps-title">Party DPS</h2>
+						<p class="panel-note" id="party-dps-sub"></p>
+					</div>
+					<div id="party-summary"></div>
+				</section>
+				<section class="panel" aria-labelledby="lanes-title">
+					<div class="panel-head">
+						<h2 id="lanes-title">Everyone's combo</h2>
+						<p class="panel-note">Each member loops their own combo against the same target. Debuffs anyone puts on it raise everyone's damage.</p>
+					</div>
+					<div id="party-lanes"></div>
+				</section>
+			</div>
+		</section>
+
+		<!-- Party: you and up to three others -->
+		<section class="tabpanel" id="panel-party" role="tabpanel" aria-labelledby="tab-party" hidden>
+			<section class="panel" aria-labelledby="members-title">
+				<div class="panel-head">
+					<h2 id="members-title">Party members</h2>
+					<p class="panel-note">You and up to three others. Pick a member in the bar at the top to edit their character, gear and talents.</p>
+				</div>
+				<div class="member-grid" id="party-members"></div>
+			</section>
+			<div class="cols">
+				<div class="col">
+					<section class="panel" aria-labelledby="add-title">
+						<div class="panel-head">
+							<h2 id="add-title">Add a member</h2>
+						</div>
+						<div id="party-add"></div>
+					</section>
+				</div>
+				<div class="col">
+					<section class="panel" aria-labelledby="enemy-title">
+						<div class="panel-head">
+							<h2 id="enemy-title">The party's target</h2>
+						</div>
+						<div class="field-grid" id="party-enemy"></div>
+					</section>
+					<section class="panel" aria-labelledby="synergy-title">
+						<div class="panel-head">
+							<h2 id="synergy-title">What each member brings</h2>
+						</div>
+						<div id="party-synergy"></div>
+					</section>
+				</div>
+			</div>
+		</section>
+
+		<!-- Import: up to four scans from the game -->
+		<section class="tabpanel" id="panel-import" role="tabpanel" aria-labelledby="tab-import" hidden>
+			<section class="panel" aria-labelledby="loads-title">
+				<div class="panel-head">
+					<h2 id="loads-title">Loads</h2>
+					<div class="panel-tools" id="loads-tools"></div>
+				</div>
+				<p class="panel-note" id="loads-note"></p>
+				<div class="load-grid" id="loads"></div>
+				<div id="loads-extra"></div>
+				<input type="file" id="load-file" accept=".json,application/json" hidden>
+			</section>
+		</section>
+
+		<!-- Settings: account, backups, this browser -->
+		<section class="tabpanel" id="panel-settings" role="tabpanel" aria-labelledby="tab-settings" hidden>
+			<div class="cols">
+				<div class="col">
+					<section class="panel" aria-labelledby="drive-title">
+						<div class="panel-head">
+							<h2 id="drive-title">Google Drive</h2>
+						</div>
+						<div id="drive-settings"></div>
+					</section>
+				</div>
+				<div class="col">
+					<section class="panel" aria-labelledby="file-title">
+						<div class="panel-head">
+							<h2 id="file-title">Backup file</h2>
+						</div>
+						<div id="file-settings"></div>
+						<input type="file" id="backup-file" accept=".json,application/json" hidden>
+					</section>
+					<section class="panel" aria-labelledby="browser-title">
+						<div class="panel-head">
+							<h2 id="browser-title">This browser</h2>
+						</div>
+						<div id="browser-settings"></div>
+					</section>
+				</div>
+			</div>
+		</section>
 	</main>
 </body>
 </html>
