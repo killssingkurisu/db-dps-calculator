@@ -4,9 +4,10 @@ const fs = require('fs'), vm = require('vm');
 const R = require('path').join(__dirname, '..') + '/';
 for (const f of ['app/data/game-data.js', 'talents/js/talent-data.js', 'talents/js/mage-data.js', 'talents/js/viperblade-data.js',
 	'talents/js/soulthief-data.js', 'talents/js/sentinel-data.js', 'talents/js/justicar-data.js', 'talents/js/templar-data.js',
-	'app/combos.js', 'app/engine.js'])
+	'app/combos.js', 'app/engine.js', 'app/library.js'])
 	vm.runInThisContext(fs.readFileSync(R + f, 'utf8'), { filename: f });
-const E = window.DBB_ENGINE, D = window.DBB_DATA, T = window.DBCALC_TALENT_DATA;
+const E = window.DBB_ENGINE, D = window.DBB_DATA, T = window.DBCALC_TALENT_DATA, L = window.DBB_LIBRARY;
+const pending = [];
 
 function bare(disc) {
 	const s = E.defaultState();
@@ -46,9 +47,49 @@ for (const [d, def] of [[3, 1344], [0, 1008], [6, 1680]]) {
 }
 // 2. Legendary attack main hand = 912
 { const s = bare(3); s.gearMode = 'pieces'; const r = E.compute(s); check('legendary Attack main hand', r.gear.perSlot.mainhand.attack, 912); }
+// 2b. Attack/Expertise/Defense read by the DB Inventory Scanner replace the table values.
+{
+	const s = bare(3); s.gearMode = 'pieces';
+	s.gear.mainhand.stats = { attack: 472, expertise: 400, defense: 0 };
+	const r = E.compute(s);
+	check('scanned main hand Attack', r.gear.perSlot.mainhand.attack, 472);
+	check('scanned main hand Expertise', r.gear.perSlot.mainhand.expertise, 400);
+	check('other slots keep table values', r.gear.perSlot.offhand.attack, E.tableStats('Rogue', 'Shield', s.gear.offhand.focus, s.gear.offhand.rarity).attack);
+	check('bad scanned stats are ignored', E.scannedStats({ stats: { attack: -5, expertise: 'x' } }), null);
+}
+// 2c. Scan files and the scanner's links.
+{
+	const scan = { format: 'dbb-inventory', version: 1, source: 'test', scannedAt: '2026-10-05T18:42:07Z', character: { name: 'ksq', class: 'Rogue' },
+		gear: [{ name: 'Key to the City', gearId: 1019, tier: 1, slot: 'mainhand', rarity: 'R', focus: 'Expertise', runes: ['ProcMassiveTime'],
+			skillRune: 'PoisonStrike', magic: 'Speed+CraftDrop', level: 28, equipped: true, stats: { attack: 472, expertise: 400, defense: 0 },
+			charms: ['expertise', null, 'attack@7'], confidence: 1 }],
+		charms: [{ key: 'twilightSliver', name: 'Twilight Sliver', count: 6 }, { key: 'attack@10', name: 'Infinite Citrine', count: 2 }] };
+	const p = L.parseScan(JSON.stringify(scan));
+	const g = p.inventory && p.inventory.gear[0];
+	check('scan import keeps stats', g && JSON.stringify(g.stats), '{"attack":472,"expertise":400,"defense":0}');
+	check('scan import keeps the proc rune', g && g.runes.join(), 'ProcMassiveTime');
+	check('scan import keeps the skill rune', g && g.skillRune, 'PoisonStrike');
+	check('scan import keeps the magic rune', g && g.magic, 'Speed+CraftDrop');
+	check('scan import keeps socketed charms', g && g.charms.join(), 'expertise,,attack@7');
+	check('top-rank charm key normalized on import', p.inventory && p.inventory.charms.map(c => c.key).join(), 'twilightSliver,attack');
+	check('scan without class is refused', !!L.parseScan(JSON.stringify(Object.assign({}, scan, { character: { name: 'x' } }))).error, true);
+	const b64 = Buffer.from(JSON.stringify(scan)).toString('base64url');
+	check('plain link import', (L.parseScan('https://example.test/#inv=' + b64).inventory || {}).id, 'inv-rogue-ksq');
+	const z = require('zlib').deflateRawSync(Buffer.from(JSON.stringify(scan))).toString('base64url');
+	pending.push(L.readScan('https://killssingkurisu.github.io/db-dps-calculator/#invz=' + z).then(r => {
+		check('compressed link import', r.inventory && r.inventory.gear[0].name, 'Key to the City');
+	}));
+	pending.push(L.readScan('#invz=AAAA' + z.slice(4)).then(r => check('damaged compressed link', !!r.error, true)));
+}
 // 3. Charms
 { const s = bare(3); s.charms = { attack: 18 }; check('18 attack charms', E.compute(s).stats.attack, 3914 + 18 * 84); }
 { const s = bare(3); s.charms = { hp: 2, defense: 3, expertise: 4 }; const r = E.compute(s); check('charm HP', r.stats.hp, 68109 + 2 * 2838); check('charm DEF', r.stats.defense, 1344 + 84); check('charm EXP', r.stats.expertise, 2655 + 336); }
+// 3b. Charm ranks ("attack@7" is a Radiant Citrine, +41 Attack) and special charms.
+{ const s = bare(3); s.charms = { attack: 1, 'attack@7': 2 }; const r = E.compute(s); check('rank 7 Attack charms', r.stats.attack, 3914 + 84 + 2 * 41); check('charm count with ranks', r.charms.count, 3); }
+{ const s = bare(3); s.charms = { 'critChance@1': 1, eyeOfDiscovery: 1 }; const r = E.compute(s); check('Chipped Amethyst + Eye of Discovery crit stat', r.charms.critChance, 0.006 + 0.05, 1e-12); check('Eye of Discovery gear find', r.charms.gearFind, 0.08, 1e-12); }
+check('charm name for attack@10', E.charmInfo('attack@10').name, 'Infinite Citrine');
+check('top rank key is normalized', E.charmInfo('attack@10').key, 'attack');
+check('unknown charm rank is rejected', E.charmInfo('attack@11'), null);
 // 4. Crit chance: notes example 70% stat -> 25.5%
 { const s = bare(3); s.extra.critChance = 70; check('crit 70% stat -> real', E.compute(s).stats.critReal, 0.255, 1e-12); }
 // 5a. Notes example: Heavy Blow with 20% crit power -> 70%
@@ -235,4 +276,4 @@ for (const disc of D.disciplines) {
 	const by = Object.fromEntries(res.skills.map(s => [s.key, s.direct]));
 	check('override from the latest cast is used', [by.X, by.Y].join(','), '2000,3000');
 }
-console.log(ok + ' checks passed');
+Promise.all(pending).then(() => console.log(ok + ' checks passed'));

@@ -4,7 +4,10 @@
 
 	var D = window.DBB_DATA;
 	var E = window.DBB_ENGINE;
-	var BUILDS_KEY = "dbb-saved-builds-v1";
+	var LIB = window.DBB_LIBRARY;
+	var DRIVE = window.DBB_DRIVE;
+	var INV_KEY = "dbb-inventory-selected-v1";
+	var SCANNER_URL = "https://github.com/killssingkurisu/db-inventory-scanner/releases/latest";
 	var LAST_KEY = "dbb-last-state-v1";
 	var TAB_KEY = "dbb-sheet-tab-v1";
 	var WINDOWS = [15, 30, 60];
@@ -91,6 +94,16 @@
 
 	/* ---------- state ---------- */
 
+	function cleanCharms(c) {
+		var out = {};
+		Object.keys(c || {}).forEach(function (k) {
+			var info = E.charmInfo(k);
+			var n = Math.max(0, Math.min(99, Math.floor(+c[k] || 0)));
+			if (info && n) out[info.key] = (out[info.key] || 0) + n;
+		});
+		return out;
+	}
+
 	function normalize(s) {
 		var d = E.defaultState();
 		s = s && typeof s === "object" ? s : {};
@@ -101,7 +114,7 @@
 			gearMode: s.gearMode === "totals" ? "totals" : "pieces",
 			gearTotals: Object.assign({}, d.gearTotals, s.gearTotals || {}),
 			gear: {},
-			charms: Object.assign({}, s.charms || {}),
+			charms: cleanCharms(s.charms),
 			extra: Object.assign({}, d.extra, s.extra || {}),
 			target: {
 				element: D.elements.indexOf(t.element) >= 0 ? t.element : "",
@@ -119,13 +132,18 @@
 		};
 		D.gear.slots.forEach(function (slot) {
 			var g = (s.gear || {})[slot.key] || d.gear[slot.key];
-			out.gear[slot.key] = {
+			var piece = {
 				rarity: g.rarity || "L",
 				focus: g.focus || "Balanced",
 				runes: Array.isArray(g.runes) ? g.runes.slice(0, 2) : [],
 				skillRune: g.skillRune || "",
 				magic: g.magic || ""
 			};
+			// A piece equipped from a scan keeps its name and the stats the game showed.
+			if (typeof g.item === "string" && g.item) piece.item = g.item.slice(0, 80);
+			var st = E.scannedStats(g);
+			if (st) piece.stats = st;
+			out.gear[slot.key] = piece;
 		});
 		return out;
 	}
@@ -169,7 +187,7 @@
 		queued = true;
 		requestAnimationFrame(function () {
 			queued = false;
-			if (!POPOUT && currentClass() !== renderedClass) renderGear();
+			if (!POPOUT && currentClass() !== renderedClass) { renderGear(); renderInventory(); }
 			renderResults();
 		});
 	}
@@ -237,12 +255,13 @@
 		return el("label", { class: "field" }, [el("span", { class: "field-label", text: label }), sel]);
 	}
 
-	function slotStatsText(stats) {
+	function slotStatsText(stats, scanned) {
 		var parts = [];
 		if (stats.attack) parts.push([fmt(stats.attack), " Atk"]);
 		if (stats.expertise) parts.push([fmt(stats.expertise), " Exp"]);
 		if (stats.defense) parts.push([fmt(stats.defense), " Def"]);
-		var span = el("span", { class: "slot-stats" });
+		var span = el("span", { class: "slot-stats" + (scanned ? " scanned" : ""),
+			title: scanned ? "As the game showed it, from your scan" : "The game's table value for this rarity and stat focus at level 50" });
 		parts.forEach(function (p, i) {
 			if (i) span.appendChild(document.createTextNode("  "));
 			span.appendChild(el("b", { text: p[0] }));
@@ -271,8 +290,8 @@
 				var r = D.skillRunes[k];
 				return [k, r ? r.desc || r.name : k];
 			}));
-			var stats = ((D.gear.stats[cls] || {})[slot.type] || {})[g.focus];
-			stats = (stats && stats[rarity.key]) || { attack: 0, expertise: 0, defense: 0 };
+			var scanned = E.scannedStats(g);
+			var stats = scanned || E.tableStats(cls, slot.type, g.focus, rarity.key);
 
 			function set(key, idx) {
 				return function (v) {
@@ -282,9 +301,25 @@
 					} else {
 						g[key] = v;
 					}
-					if (key === "rarity" || key === "focus") renderGear();
+					// A changed piece is no longer the scanned item. Runes don't move its
+					// Attack, Expertise and Defense, but a new rarity or stat focus does.
+					var wasItem = !!g.item;
+					delete g.item;
+					if (key === "rarity" || key === "focus") delete g.stats;
+					if (key === "rarity" || key === "focus" || wasItem) {
+						renderGear();
+						renderInventory();
+					}
 					onChange();
 				};
+			}
+
+			function useTable() {
+				delete g.stats;
+				delete g.item;
+				renderGear();
+				renderInventory();
+				onChange();
 			}
 
 			var fields = el("div", { class: "slot-fields" }, [
@@ -297,9 +332,15 @@
 			]);
 			var head = el("div", { class: "slot-head" }, [
 				el("span", { class: "slot-name", text: slot.name }),
-				state.gearMode === "pieces" ? slotStatsText(stats) : null
+				state.gearMode === "pieces" ? slotStatsText(stats, !!scanned) : null
 			]);
-			grid.appendChild(el("div", { class: "slot" }, [head, fields]));
+			var item = (g.item || scanned) ? el("div", { class: "slot-item" }, [
+				el("span", { class: "slot-item-name rarity-" + rarity.key, text: g.item || "Scanned piece" }),
+				scanned && state.gearMode === "pieces" ? el("span", { class: "slot-item-note", text: "stats from your scan" }) : null,
+				scanned && state.gearMode === "pieces" ? el("button", { type: "button", class: "link-btn", text: "Use table stats", onclick: useTable,
+					title: "Use the game's table values for this rarity and stat focus instead" }) : null
+			]) : null;
+			grid.appendChild(el("div", { class: "slot" + (scanned ? " has-scan" : "") }, [head, item, fields]));
 		});
 		renderGearMode();
 	}
@@ -333,32 +374,70 @@
 
 	/* ---------- charms ---------- */
 
-	function charmValueText(c) {
-		if (c.key === "critChance") return "+" + pct(c.value, 1) + " crit stat, about " + pct(c.value * 0.15, 1) + " real";
-		if (c.unit === "pct") return "+" + pct(c.value, 1) + " " + c.name;
-		return "+" + fmt(c.value) + " " + c.name;
+	function statValueText(stat, value) {
+		var c = D.charms.filter(function (x) { return x.stat === stat; })[0];
+		var name = c ? c.name : stat;
+		if (stat === "critChance") return "+" + pct(value, 1) + " crit stat (about " + pct(value * 0.15, 2) + " real)";
+		if (c && c.unit === "pct") return "+" + pct(value, 1) + " " + name;
+		return "+" + fmt(value) + " " + name;
+	}
+
+	function charmValueText(info) {
+		return Object.keys(info.stats).map(function (st) { return statValueText(st, info.stats[st]); }).join(", ");
+	}
+
+	function charmRow(key, removable) {
+		var info = E.charmInfo(key);
+		var input = el("input", { type: "number", min: "0", max: "18", step: "1", inputmode: "numeric", "aria-label": info.name + " charms", value: state.charms[key] || 0 });
+		function setCount(n) {
+			n = clamp(Math.round(+n) || 0, 0, 18);
+			if (n) state.charms[key] = n;
+			else delete state.charms[key];
+			input.value = n;
+			onChange();
+		}
+		input.addEventListener("input", function () { setCount(input.value); });
+		var minus = el("button", { type: "button", "aria-label": "One fewer " + info.name, text: "−", onclick: function () { setCount((state.charms[key] || 0) - 1); } });
+		var plus = el("button", { type: "button", "aria-label": "One more " + info.name, text: "+", onclick: function () { setCount((state.charms[key] || 0) + 1); } });
+		var title = info.special ? info.name : info.label;
+		var sub = info.special ? "" : info.name + (info.rank < E.CHARM_MAX_RANK ? ", rank " + info.rank : "");
+		return el("div", { class: "charm" + (removable ? " charm-extra" : "") }, [
+			el("span", { class: "charm-name" }, [title, sub ? el("small", { text: sub }) : null]),
+			el("span", { class: "stepper" }, [minus, input, plus]),
+			el("span", { class: "charm-value", text: charmValueText(info) + " each" })
+		]);
 	}
 
 	function renderCharms() {
 		var list = $("charm-list");
 		clear(list);
-		D.charms.forEach(function (c) {
-			var input = el("input", { type: "number", min: "0", max: "18", step: "1", inputmode: "numeric", "aria-label": c.name + " charms", value: state.charms[c.key] || 0 });
-			function setCount(n) {
-				n = clamp(Math.round(+n) || 0, 0, 18);
-				state.charms[c.key] = n;
-				input.value = n;
-				onChange();
-			}
-			input.addEventListener("input", function () { setCount(input.value); });
-			var minus = el("button", { type: "button", "aria-label": "One fewer " + c.name + " charm", text: "−", onclick: function () { setCount((state.charms[c.key] || 0) - 1); } });
-			var plus = el("button", { type: "button", "aria-label": "One more " + c.name + " charm", text: "+", onclick: function () { setCount((state.charms[c.key] || 0) + 1); } });
-			list.appendChild(el("div", { class: "charm" }, [
-				el("span", { class: "charm-name", text: c.name }),
-				el("span", { class: "stepper" }, [minus, input, plus]),
-				el("span", { class: "charm-value", text: charmValueText(c) + " each" })
-			]));
-		});
+		D.charms.forEach(function (c) { list.appendChild(charmRow(c.key, false)); });
+		// Lower ranks and special charms, from a scan or added by hand.
+		Object.keys(state.charms).filter(function (k) {
+			var info = E.charmInfo(k);
+			return info && (info.special || info.rank < E.CHARM_MAX_RANK);
+		}).sort().forEach(function (k) { list.appendChild(charmRow(k, true)); });
+
+		var typeSel = el("select", { "aria-label": "Charm" });
+		D.charms.forEach(function (c) { typeSel.appendChild(option(c.key, c.name + " (" + c.gem + ")", false)); });
+		(D.specialCharms || []).forEach(function (c) { typeSel.appendChild(option(c.key, c.name, false)); });
+		var rankSel = el("select", { "aria-label": "Rank" });
+		for (var r = E.CHARM_MAX_RANK; r >= 1; r--) rankSel.appendChild(option(String(r), r + " · " + (D.charmRanks[r - 1] || ""), r === E.CHARM_MAX_RANK));
+		function syncRank() { rankSel.disabled = !D.charms.some(function (c) { return c.key === typeSel.value; }); }
+		typeSel.addEventListener("change", syncRank);
+		syncRank();
+		var add = el("button", { type: "button", class: "btn btn-small", text: "Add", onclick: function () {
+			var key = rankSel.disabled ? typeSel.value : typeSel.value + "@" + rankSel.value;
+			var info = E.charmInfo(key);
+			if (!info) return;
+			state.charms[info.key] = (state.charms[info.key] || 0) + 1;
+			renderCharms();
+			onChange();
+		} });
+		list.appendChild(el("div", { class: "charm-add" }, [
+			el("span", { class: "field-label", text: "Add a lower-rank or special charm" }),
+			el("span", { class: "charm-add-row" }, [typeSel, rankSel, add])
+		]));
 	}
 
 	/* ---------- other bonuses, target ---------- */
@@ -429,10 +508,11 @@
 
 	/* ---------- saved builds, compare ---------- */
 
-	function savedBuilds() { return storeGet(BUILDS_KEY, []); }
+	function savedBuilds() { return LIB.builds(); }
 
 	function renderBuilds() {
 		var list = $("build-list");
+		if (!list) { renderCompareSelect(); return; }
 		clear(list);
 		var builds = savedBuilds();
 		if (!builds.length) list.appendChild(el("li", { class: "empty", text: "No saved builds yet." }));
@@ -449,10 +529,8 @@
 					toast("Loaded " + b.name);
 				} }),
 				el("button", { type: "button", class: "btn btn-small", text: "Delete", onclick: function () {
-					storeSet(BUILDS_KEY, savedBuilds().filter(function (x) { return x.id !== b.id; }));
+					LIB.deleteBuild(b.id);
 					if (compareId === b.id) compareId = "";
-					renderBuilds();
-					onChange();
 				} }),
 				el("span", { class: "build-meta", text: disc.name + ", saved " + new Date(b.saved).toLocaleString() })
 			]));
@@ -474,13 +552,8 @@
 			e.preventDefault();
 			var input = $("save-name");
 			var name = input.value.trim() || currentDisc().name + " build";
-			var builds = savedBuilds();
-			var existing = builds.filter(function (b) { return b.name === name; })[0];
-			var entry = { id: existing ? existing.id : "b" + Date.now().toString(36), name: name, saved: Date.now(), state: JSON.parse(JSON.stringify(state)) };
-			builds = builds.filter(function (b) { return b.name !== name; }).concat([entry]);
-			storeSet(BUILDS_KEY, builds);
+			LIB.saveBuild(name, state);
 			input.value = "";
-			renderBuilds();
 			toast("Saved " + name);
 		});
 		$("compare-select").addEventListener("change", function () {
@@ -495,6 +568,271 @@
 				window.prompt("Copy this link", url);
 			}
 		});
+	}
+
+	/* ---------- scanned inventory ---------- */
+
+	var SLOT_NAME = {};
+	D.gear.slots.forEach(function (s) { SLOT_NAME[s.key] = s.name; });
+	var RARITY_NAME = { M: "Magic", R: "Rare", L: "Legendary" };
+	var invOpen = {};   // which slot groups of the scanned gear panel are open
+
+	function selectedInventory() {
+		var all = LIB.inventories();
+		if (!all.length) return null;
+		var id = storeGet(INV_KEY, "");
+		return all.filter(function (x) { return x.id === id; })[0] || all[all.length - 1];
+	}
+
+	function gearToSlot(item) {
+		var piece = { rarity: item.rarity, focus: item.focus, runes: item.runes.slice(0, 2), skillRune: item.skillRune || "", magic: item.magic || "", item: item.name };
+		var st = E.scannedStats(item);
+		if (st) piece.stats = st;
+		return piece;
+	}
+
+	// Is the calculator's piece in a slot this scanned item?
+	function sameGear(item, piece) {
+		return item.rarity === piece.rarity && item.focus === piece.focus && (item.skillRune || "") === (piece.skillRune || "") && (item.magic || "") === (piece.magic || "") &&
+			JSON.stringify((item.runes || []).filter(Boolean)) === JSON.stringify((piece.runes || []).filter(Boolean)) &&
+			JSON.stringify(E.scannedStats(item)) === JSON.stringify(E.scannedStats(piece)) &&
+			(!piece.item || piece.item === item.name);
+	}
+
+	function statsLine(st) {
+		var parts = [];
+		if (st.attack) parts.push(fmt(st.attack) + " Atk");
+		if (st.expertise) parts.push(fmt(st.expertise) + " Exp");
+		if (st.defense) parts.push(fmt(st.defense) + " Def");
+		return parts.join(" · ");
+	}
+
+	function equipItem(item) {
+		if (state.gearMode !== "pieces") state.gearMode = "pieces";
+		state.gear[item.slot] = gearToSlot(item);
+		renderGear();
+		renderInventory();
+		onChange();
+	}
+
+	function useEquipped(inv) {
+		var equipped = inv.gear.filter(function (g) { return g.equipped; });
+		if (!equipped.length) { toast("This scan has no equipped gear"); return; }
+		state.gearMode = "pieces";
+		var charms = {};
+		equipped.forEach(function (g) {
+			state.gear[g.slot] = gearToSlot(g);
+			(g.charms || []).forEach(function (k) {
+				var info = k && E.charmInfo(k);
+				if (info) charms[info.key] = (charms[info.key] || 0) + 1;
+			});
+		});
+		state.charms = charms;
+		renderInputs();
+		onChange();
+		toast("Using " + inv.character.name + "'s equipped gear and charms");
+	}
+
+	function runeNames(item) {
+		var parts = item.runes.map(function (k) { return D.runes[k] ? D.runes[k].name : k; });
+		if (item.skillRune) {
+			var sr = D.skillRunes[item.skillRune];
+			parts.push((sr && sr.name ? sr.name : item.skillRune) + " rune");
+		}
+		if (item.magic) {
+			var m = D.gear.magicRunes.filter(function (x) { return x.key === item.magic; })[0];
+			parts.push(m ? m.name : item.magic);
+		}
+		return parts.join(" · ");
+	}
+
+	// Resolves to true when the scan was imported.
+	function importScan(input, quiet) {
+		return LIB.readScan(input).then(function (res) {
+			if (res.error) { toast(res.error); return false; }
+			var inv = LIB.putInventory(res.inventory);
+			storeSet(INV_KEY, inv.id);
+			renderInventory();
+			if (!quiet) toast("Imported " + inv.gear.length + " gear and " + inv.charms.length + " kinds of charms for " + inv.character.name);
+			return true;
+		});
+	}
+
+	function renderInventory() {
+		var box = $("inventory-body");
+		if (!box) return;
+		clear(box);
+		var all = LIB.inventories();
+		var inv = selectedInventory();
+		if (!inv) {
+			box.appendChild(el("p", { class: "panel-note" }, [
+				"Scan your gear and charms in the game with the ",
+				el("a", { href: SCANNER_URL, target: "_blank", rel: "noopener", text: "DB Inventory Scanner" }),
+				" (Windows), then import the file it saves. You can also paste its text or open the link it gives you."
+			]));
+			return;
+		}
+		var cls = currentClass();
+		var head = el("div", { class: "inv-head" });
+		if (all.length > 1) {
+			var sel = el("select", { "aria-label": "Scanned character" });
+			all.slice().reverse().forEach(function (x) {
+				sel.appendChild(option(x.id, x.character.name + " (" + x.character.class + ")", x.id === inv.id));
+			});
+			sel.addEventListener("change", function () { storeSet(INV_KEY, sel.value); renderInventory(); });
+			head.appendChild(el("label", { class: "field field-inline" }, [el("span", { class: "field-label", text: "Character" }), sel]));
+		}
+		head.appendChild(el("p", { class: "inv-meta" }, [
+			el("b", { text: inv.character.name }),
+			" · " + inv.character.class + (inv.character.level ? " level " + inv.character.level : "") +
+			" · scanned " + new Date(inv.scannedAt).toLocaleString() + " · " + inv.gear.length + " gear"
+		]));
+		var mismatch = inv.character.class !== cls;
+		head.appendChild(el("div", { class: "inv-actions" }, [
+			el("button", { type: "button", class: "btn btn-small btn-primary", text: "Use equipped gear and charms", disabled: mismatch ? true : null, onclick: function () { useEquipped(inv); } }),
+			el("button", { type: "button", class: "btn btn-small", text: "Remove this scan", onclick: function () {
+				if (!window.confirm("Remove the scan of " + inv.character.name + " from this browser" + (DRIVE && DRIVE.status().state === "synced" ? " and Google Drive" : "") + "?")) return;
+				LIB.deleteInventory(inv.id);
+			} })
+		]));
+		box.appendChild(head);
+		if (mismatch) {
+			box.appendChild(el("p", { class: "panel-note warn", text: inv.character.name + " is a " + inv.character.class + ". Pick a " + inv.character.class + " discipline at the top to equip this gear." }));
+		}
+
+		D.gear.slots.forEach(function (slot) {
+			var items = inv.gear.filter(function (g) { return g.slot === slot.key; });
+			if (!items.length) return;
+			var openKey = inv.id + "|" + slot.key;
+			items.sort(function (a, b) {
+				return (b.equipped - a.equipped) || ("LRM".indexOf(a.rarity) - "LRM".indexOf(b.rarity)) || (b.level - a.level) || a.name.localeCompare(b.name);
+			});
+			var current = state.gear[slot.key];
+			var details = el("details", { class: "inv-slot", open: invOpen[openKey] ? true : null });
+			details.addEventListener("toggle", function () { invOpen[openKey] = details.open; });
+			details.appendChild(el("summary", {}, [
+				el("span", { class: "inv-slot-name", text: slot.name }),
+				el("span", { class: "inv-count", text: items.length + (items.length === 1 ? " item" : " items") })
+			]));
+			var ul = el("ul", { class: "inv-list" });
+			items.forEach(function (g) {
+				var using = sameGear(g, current);
+				var charmText = (g.charms || []).filter(Boolean).map(function (k) { var i = E.charmInfo(k); return i ? i.name : k; }).join(", ");
+				var focusName = (D.gear.focuses.filter(function (f) { return f.key === g.focus; })[0] || {}).name || g.focus;
+				ul.appendChild(el("li", { class: "inv-item" + (using ? " on" : "") }, [
+					el("div", { class: "inv-item-main" }, [
+						el("span", { class: "inv-name rarity-" + g.rarity, text: g.name }),
+						el("span", { class: "inv-tags" }, [
+							RARITY_NAME[g.rarity] + " · " + focusName + (g.level ? " · level " + g.level : "") + (g.stats ? " · " + statsLine(g.stats) : ""),
+							g.equipped ? el("span", { class: "badge", text: "Equipped in game" }) : null
+						]),
+						el("span", { class: "inv-runes", text: runeNames(g) || "No runes" }),
+						charmText ? el("span", { class: "inv-charms", text: "Charms: " + charmText }) : null
+					]),
+					el("button", { type: "button", class: "btn btn-small", text: using ? "In use" : "Equip", disabled: (using || mismatch) ? true : null,
+						"aria-label": (using ? "In use: " : "Equip ") + g.name, onclick: function () { equipItem(g); } })
+				]));
+			});
+			details.appendChild(ul);
+			box.appendChild(details);
+		});
+
+		if (inv.charms.length) {
+			var chips = el("ul", { class: "inv-charm-list" });
+			inv.charms.forEach(function (c) {
+				var info = E.charmInfo(c.key);
+				chips.appendChild(el("li", {}, [el("b", { text: "×" + c.count }), " " + (info ? info.name : c.name),
+					info ? el("small", { text: charmValueText(info) }) : null]));
+			});
+			box.appendChild(el("h3", { text: "Charms in your bags" }));
+			box.appendChild(chips);
+		}
+	}
+
+	function setupInventory() {
+		var file = $("inv-file");
+		$("inv-import").addEventListener("click", function () { file.click(); });
+		file.addEventListener("change", function () {
+			var f = file.files && file.files[0];
+			if (!f) return;
+			var reader = new FileReader();
+			reader.onload = function () { importScan(String(reader.result)); file.value = ""; };
+			reader.readAsText(f);
+		});
+		$("inv-paste").addEventListener("click", function () {
+			function fromText(text) { if (text && text.trim()) importScan(text); }
+			if (navigator.clipboard && navigator.clipboard.readText && window.isSecureContext) {
+				navigator.clipboard.readText().then(fromText, function () { fromText(window.prompt("Paste the scan text here")); });
+			} else {
+				fromText(window.prompt("Paste the scan text here"));
+			}
+		});
+		// Dropping a scan file anywhere on the panel imports it.
+		var panel = $("inventory-panel");
+		panel.addEventListener("dragover", function (e) { e.preventDefault(); panel.classList.add("drop"); });
+		panel.addEventListener("dragleave", function () { panel.classList.remove("drop"); });
+		panel.addEventListener("drop", function (e) {
+			e.preventDefault();
+			panel.classList.remove("drop");
+			var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+			if (!f) return;
+			var reader = new FileReader();
+			reader.onload = function () { importScan(String(reader.result)); };
+			reader.readAsText(f);
+		});
+	}
+
+	/* ---------- Google sign-in ---------- */
+
+	function timeAgo(t) {
+		var s = Math.max(0, Math.round((Date.now() - t) / 1000));
+		if (s < 60) return "just now";
+		if (s < 3600) return Math.round(s / 60) + " min ago";
+		if (s < 86400) return Math.round(s / 3600) + " h ago";
+		return new Date(t).toLocaleDateString();
+	}
+
+	function renderCloud(st) {
+		var box = $("cloud");
+		if (!box || !DRIVE) return;
+		clear(box);
+		var p = st.profile || {};
+		var signedIn = st.state !== "signed-out" && p.email;
+		if (!signedIn) {
+			box.appendChild(el("button", { type: "button", class: "btn btn-google", disabled: st.gis === "failed" ? true : null,
+				title: "Keep your saved builds and scanned gear in your Google Drive", onclick: function () { DRIVE.signIn(); } }, "Sign in with Google"));
+		} else {
+			var label = st.state === "syncing" ? "Syncing…"
+				: st.state === "synced" ? "Synced " + timeAgo(st.lastSync || Date.now())
+				: st.state === "expired" ? "Not syncing"
+				: st.state === "connecting" ? "Connecting…"
+				: "Sync problem";
+			var menu = el("details", { class: "cloud-menu" });
+			menu.appendChild(el("summary", { "aria-label": "Google Drive sync, " + p.email }, [
+				p.picture ? el("img", { src: p.picture, alt: "", width: "22", height: "22", referrerpolicy: "no-referrer" }) : el("span", { class: "g-mark", text: (p.name || p.email || "?").charAt(0).toUpperCase() }),
+				el("span", { class: "cloud-state cloud-" + st.state, text: label })
+			]));
+			var body = el("div", { class: "cloud-pop" }, [
+				el("p", {}, [el("b", { text: p.name || p.email }), el("br"), el("small", { text: p.email })]),
+				el("p", { class: "panel-note", text: "Saved builds and scanned gear are kept in your Google Drive's private app folder and synced between your browsers." }),
+				st.state === "expired"
+					? el("button", { type: "button", class: "btn btn-small btn-primary", text: "Reconnect", onclick: function () { DRIVE.signIn(); } })
+					: el("button", { type: "button", class: "btn btn-small", text: "Sync now", disabled: st.state === "syncing" ? true : null, onclick: function () { DRIVE.sync(); } }),
+				el("button", { type: "button", class: "btn btn-small", text: "Sign out", onclick: function () { DRIVE.signOut(); } })
+			]);
+			menu.appendChild(body);
+			box.appendChild(menu);
+		}
+		if (st.message && (st.state === "error" || st.state === "expired" || !signedIn)) {
+			box.appendChild(el("span", { class: "cloud-msg" + (st.state === "error" ? " err" : ""), role: "status", text: st.message }));
+		}
+	}
+
+	function setupCloud() {
+		if (!DRIVE || !DRIVE.configured) return;
+		DRIVE.onStatus(renderCloud);
+		DRIVE.init();
+		setInterval(function () { if (DRIVE.status().state === "synced") renderCloud(DRIVE.status()); }, 60000);
 	}
 
 	function compareResult() {
@@ -1146,6 +1484,7 @@
 
 	function renderInputs() {
 		renderGear();
+		renderInventory();
 		renderCharms();
 		renderExtra();
 		renderTarget();
@@ -1153,12 +1492,30 @@
 		renderBuilds();
 	}
 
+	// A scan sent from the DB Inventory Scanner as a link: …/#invz=<raw DEFLATE, base64url>,
+	// or …/#inv=<base64 JSON>. True when the address had one (it is imported in the background).
+	function readScanHash() {
+		var m = /^#(invz?=[A-Za-z0-9_-]+)$/.exec(location.hash);
+		if (!m) return false;
+		try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { /* ignore */ }
+		importScan(m[1]).then(function (ok) {
+			persist();
+			if (!ok) return;
+			var panel = $("inventory-panel");
+			if (panel && panel.scrollIntoView) setTimeout(function () { panel.scrollIntoView({ behavior: "smooth", block: "start" }); }, 300);
+		});
+		return true;
+	}
+
 	function init() {
-		if (!D || !E) return;
-		state = readHash() || normalize(storeGet(LAST_KEY, null));
+		if (!D || !E || !LIB) return;
+		LIB.load();
+		var scanInHash = /^#invz?=/.test(location.hash);
+		state = (!scanInHash && readHash()) || normalize(storeGet(LAST_KEY, null));
 		setupTabs();
 		setupSync();
 		if (POPOUT) {
+			LIB.onChange(function () { renderCompareSelect(); });
 			renderCompareSelect();
 			$("compare-select").addEventListener("change", function () { compareId = this.value; renderResults(); });
 			$("copy-link").addEventListener("click", function () {
@@ -1173,11 +1530,19 @@
 		buildDisciplineSelect();
 		setupGearMode();
 		setupBuilds();
+		setupInventory();
 		setupFrame();
 		renderInputs();
+		if (scanInHash) readScanHash();
 		renderResults();
 		persist();
+		setupCloud();
+		LIB.onChange(function (lib, why) {
+			if (why === "builds" || why === "sync" || why === "storage") renderBuilds();
+			if (why === "inventories" || why === "sync" || why === "storage") renderInventory();
+		});
 		window.addEventListener("hashchange", function () {
+			if (readScanHash()) return;
 			var s = readHash();
 			if (!s || JSON.stringify(s) === JSON.stringify(state)) return;
 			state = s;

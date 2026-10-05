@@ -9,7 +9,7 @@
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:ital,wght@0,400;0,500;0,700;1,400&family=Grenze:wght@600;700&display=swap">
-	<link rel="stylesheet" href="app/app.css?v=3">
+	<link rel="stylesheet" href="app/app.css?v=5">
 	<script>
 		// Pop-out combo window: style it before first paint.
 		if (/[?&]view=combos(&|$)/.test(location.search)) document.documentElement.className += " popout";
@@ -21,10 +21,12 @@
 	<script src="talents/js/sentinel-data.js?v=2"></script>
 	<script src="talents/js/justicar-data.js?v=2"></script>
 	<script src="talents/js/templar-data.js?v=2"></script>
-	<script src="app/data/game-data.js?v=3"></script>
+	<script src="app/data/game-data.js?v=4"></script>
 	<script src="app/combos.js?v=2"></script>
-	<script src="app/engine.js?v=4"></script>
-	<script src="app/app.js?v=4" defer></script>
+	<script src="app/engine.js?v=6"></script>
+	<script src="app/library.js?v=2"></script>
+	<script src="app/drive.js?v=1" defer></script>
+	<script src="app/app.js?v=6" defer></script>
 </head>
 <body>
 	<header class="topbar">
@@ -36,6 +38,7 @@
 			</label>
 			<span class="popout-discipline" id="popout-discipline"></span>
 			<div class="topbar-actions">
+				<div class="cloud" id="cloud"></div>
 				<label class="field field-inline">
 					<span class="field-label">Compare with</span>
 					<select id="compare-select"><option value="">Nothing</option></select>
@@ -72,6 +75,18 @@
 					<div class="gear-grid" id="gear-grid"></div>
 				</section>
 
+				<section class="panel inventory-panel" id="inventory-panel" aria-labelledby="inv-title">
+					<div class="panel-head">
+						<h2 id="inv-title">Scanned gear</h2>
+						<div class="panel-tools">
+							<button type="button" class="btn btn-small" id="inv-import">Import scan file</button>
+							<button type="button" class="btn btn-small" id="inv-paste">Paste scan</button>
+							<input type="file" id="inv-file" accept=".json,application/json" hidden>
+						</div>
+					</div>
+					<div id="inventory-body"></div>
+				</section>
+
 				<section class="panel" aria-labelledby="charms-title">
 					<div class="panel-head">
 						<h2 id="charms-title">Charms</h2>
@@ -100,7 +115,7 @@
 				<section class="panel" aria-labelledby="builds-title">
 					<div class="panel-head">
 						<h2 id="builds-title">Saved builds</h2>
-						<p class="panel-note">Kept in this browser. Pick one under “Compare with” to see the difference.</p>
+						<p class="panel-note">Kept in this browser, and in your Google Drive when you sign in with Google. Pick one under “Compare with” to see the difference.</p>
 					</div>
 					<form class="save-form" id="save-form">
 						<label class="field">

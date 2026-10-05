@@ -332,6 +332,27 @@
 		};
 	}
 
+	// Attack, Expertise and Defense of one piece as the game showed them, read by the DB
+	// Inventory Scanner. They replace the stat tables, which don't match what the game shows
+	// for every piece. Null when the piece has none.
+	function scannedStats(piece) {
+		var st = piece && piece.stats;
+		if (!st || typeof st !== "object") return null;
+		var out = { attack: 0, expertise: 0, defense: 0 };
+		var any = false;
+		["attack", "expertise", "defense"].forEach(function (k) {
+			var v = Math.floor(+st[k] || 0);
+			if (v > 0 && v < 100000) { out[k] = v; any = true; }
+		});
+		return any ? out : null;
+	}
+
+	// The table value of one piece: by class, slot, stat focus and rarity, at level 50.
+	function tableStats(cls, slotType, focus, rarityKey) {
+		var stats = ((data().gear.stats[cls] || {})[slotType] || {})[focus || "Balanced"];
+		return (stats && stats[rarityKey]) || { attack: 0, expertise: 0, defense: 0 };
+	}
+
 	function gearBonuses(state, cls) {
 		var D = data();
 		var out = emptyGear();
@@ -340,9 +361,7 @@
 		D.gear.slots.forEach(function (slot) {
 			var s = (state.gear || {})[slot.key] || {};
 			var rarity = rarityOf(s.rarity);
-			var focus = s.focus || "Balanced";
-			var stats = ((D.gear.stats[cls] || {})[slot.type] || {})[focus];
-			stats = (stats && stats[rarity.key]) || { attack: 0, expertise: 0, defense: 0 };
+			var stats = scannedStats(s) || tableStats(cls, slot.type, s.focus, rarity.key);
 			out.perSlot[slot.key] = stats;
 			if (state.gearMode !== "totals") {
 				out.attack += stats.attack;
@@ -377,12 +396,43 @@
 		return out;
 	}
 
+	var CHARM_MAX_RANK = 10;
+
+	// A charm key is "attack" (top rank), "attack@7" (rank 7 of the Attack gem) or a special
+	// charm's key ("eyeOfDiscovery"). Returns what one charm of that key gives, or null.
+	function charmInfo(key) {
+		var m = /^([A-Za-z]+)(?:@(\d+))?$/.exec(String(key || ""));
+		if (!m) return null;
+		var D = data();
+		var gem = D.charms.filter(function (c) { return c.key === m[1]; })[0];
+		if (gem) {
+			var rank = m[2] ? +m[2] : CHARM_MAX_RANK;
+			if (rank < 1 || rank > CHARM_MAX_RANK) return null;
+			var value = gem.ranks ? gem.ranks[rank - 1] : (rank === CHARM_MAX_RANK ? gem.value : null);
+			if (value == null) return null;
+			var stats = {};
+			stats[gem.stat] = value;
+			var rankName = (D.charmRanks || [])[rank - 1] || "Rank " + rank;
+			return { key: rank === CHARM_MAX_RANK ? gem.key : gem.key + "@" + rank, type: gem.key, rank: rank, special: false,
+				name: rankName + " " + (gem.gem || gem.name), label: gem.name, stats: stats, unit: gem.unit };
+		}
+		if (m[2]) return null;
+		var sp = (D.specialCharms || []).filter(function (c) { return c.key === m[1]; })[0];
+		if (!sp) return null;
+		return { key: sp.key, type: sp.key, rank: CHARM_MAX_RANK, special: true, name: sp.name, label: sp.name, stats: sp.stats, unit: "pct" };
+	}
+
 	function charmBonuses(state) {
 		var out = { hp: 0, attack: 0, expertise: 0, defense: 0, critChance: 0, critPower: 0, gearFind: 0, goldFind: 0, materialFind: 0, count: 0 };
-		data().charms.forEach(function (c) {
-			var n = Math.max(0, Math.floor(num((state.charms || {})[c.key])));
+		var charms = state.charms || {};
+		Object.keys(charms).forEach(function (key) {
+			var info = charmInfo(key);
+			var n = Math.max(0, Math.floor(num(charms[key])));
+			if (!info || !n) return;
 			out.count += n;
-			out[c.stat] += n * c.value;
+			Object.keys(info.stats).forEach(function (stat) {
+				if (Object.prototype.hasOwnProperty.call(out, stat)) out[stat] += n * info.stats[stat];
+			});
 		});
 		return out;
 	}
@@ -1317,7 +1367,8 @@
 	}
 
 	root.DBB_ENGINE = {
-		compute: compute, decodeBuild: decodeBuild, defaultState: defaultState,
+		compute: compute, decodeBuild: decodeBuild, defaultState: defaultState, charmInfo: charmInfo, CHARM_MAX_RANK: CHARM_MAX_RANK,
+		scannedStats: scannedStats, tableStats: tableStats,
 		CONDITIONS: CONDITIONS, SELF_CONDITIONS: SELF_CONDITIONS, OPPOSITE: OPPOSITE, SLOTS_TOTAL: SLOTS_TOTAL,
 		ARMOR_BREAKS: ARMOR_BREAKS, ARMOR_BANE_MAX: ARMOR_BANE_MAX, SCORCH_BASE_MAX: SCORCH_BASE_MAX,
 		RETRIBUTION: RETRIBUTION, DEFAULT_WINDOW_S: DEFAULT_WINDOW_S,

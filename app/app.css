@@ -307,6 +307,34 @@ input[type="number"] {
 }
 
 .slot-stats b { color: var(--rune); font-weight: 500; }
+.slot-stats.scanned b { color: var(--rune-pale); }
+
+/* A piece equipped from a scan: its name and the stats the game showed. */
+.slot.has-scan { border-color: rgba(79, 208, 232, 0.45); }
+.slot-item {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 2px 10px;
+	margin-top: -4px;
+	font-size: 0.92rem;
+	min-width: 0;
+}
+.slot-item-name { font-weight: 700; overflow-wrap: anywhere; }
+.slot-item-note { color: var(--parchment-dim); font-size: 0.85rem; }
+
+.link-btn {
+	background: none;
+	border: 0;
+	padding: 0;
+	font: inherit;
+	font-size: 0.85rem;
+	color: var(--rune);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	cursor: pointer;
+}
+.link-btn:hover { color: var(--rune-pale); }
 
 .slot-fields {
 	display: grid;
@@ -909,3 +937,228 @@ input[type="number"] {
 @media (prefers-reduced-motion: reduce) {
 	* { transition: none !important; }
 }
+
+/* ---------- charm ranks ---------- */
+.charm-name small {
+	display: block;
+	color: var(--parchment-dim);
+	font-weight: 400;
+	font-size: 0.85rem;
+}
+
+.charm-extra .charm-name { color: var(--rune-pale); }
+
+.charm-add {
+	grid-column: 1 / -1;
+	display: grid;
+	gap: 4px;
+	padding-top: 8px;
+}
+
+.charm-add-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	align-items: center;
+}
+
+.charm-add-row select { min-width: 0; flex: 1 1 150px; }
+.charm-add-row select:disabled { opacity: 0.45; }
+
+/* ---------- scanned gear ---------- */
+.panel-tools {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.inventory-panel.drop {
+	border-color: var(--rune);
+	box-shadow: 0 0 0 2px rgba(79, 208, 232, 0.35);
+}
+
+.inv-head {
+	display: grid;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+
+.inv-meta { color: var(--parchment-dim); }
+.inv-meta b { color: var(--parchment); }
+
+.inv-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.inv-actions .btn-primary:disabled,
+.inv-item .btn:disabled { opacity: 0.55; cursor: default; }
+
+.panel-note.warn { color: var(--amber); margin-bottom: 8px; }
+
+.inv-slot {
+	border-top: 1px solid var(--moss-soft);
+}
+
+.inv-slot > summary {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	padding: 8px 0;
+	cursor: pointer;
+	list-style: none;
+}
+
+.inv-slot > summary::-webkit-details-marker { display: none; }
+.inv-slot > summary::before { content: "▸"; color: var(--parchment-dim); width: 1em; }
+.inv-slot[open] > summary::before { content: "▾"; }
+
+.inv-slot-name { font-weight: 700; }
+.inv-count { color: var(--parchment-dim); font-size: 0.9rem; }
+
+.inv-list {
+	list-style: none;
+	margin: 0 0 8px;
+	padding: 0;
+	display: grid;
+	gap: 6px;
+}
+
+.inv-item {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 6px 10px;
+	align-items: center;
+	padding: 8px 10px;
+	background: var(--stone-inset);
+	border: 1px solid var(--moss-soft);
+	border-radius: 6px;
+}
+
+.inv-item.on { border-color: var(--rune); box-shadow: inset 3px 0 0 var(--rune); }
+
+.inv-item-main { display: grid; gap: 2px; min-width: 0; }
+
+.inv-name { font-weight: 700; overflow-wrap: anywhere; }
+.rarity-L { color: #f8dd45; }
+.rarity-R { color: #3fa9ff; }
+.rarity-M { color: var(--parchment); }
+
+.inv-tags, .inv-runes, .inv-charms {
+	color: var(--parchment-dim);
+	font-size: 0.88rem;
+	overflow-wrap: anywhere;
+}
+
+.inv-runes { color: var(--rune-pale); }
+
+.badge {
+	display: inline-block;
+	margin-left: 8px;
+	padding: 0 6px;
+	border: 1px solid var(--moss);
+	border-radius: 999px;
+	font-size: 0.78rem;
+	color: var(--parchment);
+}
+
+.inv-charm-list {
+	list-style: none;
+	margin: 6px 0 0;
+	padding: 0;
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+	gap: 6px 14px;
+}
+
+.inv-charm-list li { padding: 4px 0; border-bottom: 1px solid var(--moss-soft); }
+.inv-charm-list small { display: block; color: var(--parchment-dim); font-size: 0.85rem; }
+.inventory-panel h3 { margin-top: 12px; }
+
+/* ---------- Google sign-in ---------- */
+.cloud {
+	position: relative;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 10px;
+}
+
+.btn-google {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	background: #fff;
+	color: #1f1f1f;
+	border-color: #fff;
+	font-weight: 600;
+}
+
+.btn-google:hover { background: #f2f2f2; }
+.btn-google:disabled { opacity: 0.6; cursor: default; }
+
+.g-mark {
+	display: inline-grid;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 50%;
+	background: var(--stone-inset);
+	color: var(--parchment);
+	font-weight: 700;
+	font-size: 0.85rem;
+}
+
+
+.cloud-menu > summary {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 10px 4px 4px;
+	border: 1px solid var(--moss);
+	border-radius: 999px;
+	cursor: pointer;
+	list-style: none;
+}
+
+.cloud-menu > summary::-webkit-details-marker { display: none; }
+.cloud-menu img { border-radius: 50%; display: block; }
+
+.cloud-state { font-size: 0.9rem; }
+.cloud-state::before {
+	content: "";
+	display: inline-block;
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	margin-right: 6px;
+	background: var(--parchment-dim);
+	vertical-align: 1px;
+}
+.cloud-synced::before { background: #6bd28b; }
+.cloud-syncing::before, .cloud-connecting::before { background: var(--rune); }
+.cloud-expired::before { background: var(--amber); }
+.cloud-error::before { background: var(--rose); }
+
+.cloud-pop {
+	position: absolute;
+	z-index: 20;
+	top: calc(100% + 6px);
+	right: 0;
+	width: min(300px, calc(100vw - 32px));
+	display: grid;
+	gap: 8px;
+	padding: 12px;
+	background: var(--slate-deep);
+	border: 1px solid var(--moss);
+	border-radius: 8px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.cloud-pop small { color: var(--parchment-dim); }
+
+.cloud-msg { font-size: 0.88rem; color: var(--parchment-dim); max-width: 340px; }
+.cloud-msg.err { color: var(--rose); }
+
+.popout .cloud { display: none; }
