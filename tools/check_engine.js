@@ -189,4 +189,41 @@ for (const disc of D.disciplines) {
 	for (let t = 450; t < 5000; t += 1500) if (t + 600 <= 5000) hits++;
 	check('Hawk Strike after Armor Breaker', hs.direct / hits, 5.9 * 3914 * 1.5, 1e-6);
 }
+// 17. Simulation edge cases on made-up skills.
+{
+	const I = E._internal;
+	const base = E.compute(bare(3));
+	function env(abilities) {
+		const tal = JSON.parse(JSON.stringify(base.talents));
+		return {
+			tal: tal, slay: 0, reduction: 0, attack: 1000, attackSpeed: 0, abilities: abilities, rank: 1,
+			runes: { multAdd: {}, appends: {}, replaces: {}, dotFlat: {}, buffTime: {}, notes: [] },
+			dot: I.makeDotBase(1000, tal), crit: { hasHemorrhage: false, chance: () => 0, factor: () => 1 },
+			selfConds: {}, buffTime: () => 0,
+			basic: { name: 'Basic', info: { power: 'SwordMelee', target: 'MeleeCombo', mults: [1], hitAt: [65], noCrit: true, busyMs: 500, manaGain: 5 }, ranged: false }
+		};
+	}
+	function ab(key, part) { return { ability: key, name: key, hotbar: 1, ranks: [Object.assign({ rank: 1, power: key + '1', target: 'Melee', mults: [], hitAt: [], busyMs: 500, lastAt: 0 }, part)] }; }
+	const bleedOnce = { apply: { rule: 'every', dots: { Bleeding: 1 }, debuffs: {} }, pulseAt: [0] };
+	// A DoT refreshed after its last tick but before it runs out keeps its stacks:
+	// 2 stacks tick 5 times, the refresh at 5.2 s makes 3 stacks that tick 5 more times.
+	let e = env([ab('A', bleedOnce), ab('Wait', { busyMs: 4200 }), ab('Long', { busyMs: 100000 })]);
+	let res = I.simulateCombo(['A', 'A', 'Wait', 'A', 'Long'], e, 20, false);
+	check('DoT refreshed late keeps its stacks', res.total / e.dot('Bleeding').perTick, 25, 1e-9);
+	// An Expertise buff counts for a DoT applied the moment it starts.
+	e = env([ab('C', Object.assign({ self: [{ buff: 'Chaos', durationMs: 5000, magic: 0.3 }], selfAt: 0 }, bleedOnce)), ab('Long', { busyMs: 100000 })]);
+	res = I.simulateCombo(['C', 'Long'], e, 20, false);
+	check('Expertise buff boosts the DoT cast with it', res.total / e.dot('Bleeding').perTick, 5 * 1.3, 1e-9);
+	// The most recently cast basic-attack override is the one in use.
+	const ovr = (mult) => ({ power: 'Ovr' + mult, target: 'Melee', mults: [mult], hitAt: [0], busyMs: 500 });
+	e = env([
+		ab('X', { self: [{ buff: 'BX', durationMs: 20000, meleeOverride: ovr(2) }], selfAt: 0 }),
+		ab('Y', { self: [{ buff: 'BY', durationMs: 20000, meleeOverride: ovr(3) }], selfAt: 0 }),
+		ab('Long', { busyMs: 100000 })
+	]);
+	e.abilities.forEach(a => { a.hotbar = 4; });   // master slots: no skill mana, no Harmony
+	res = I.simulateCombo(['X', 'Y', 'basic', 'X', 'basic', 'Long'], e, 10, false);
+	const by = Object.fromEntries(res.skills.map(s => [s.key, s.direct]));
+	check('override from the latest cast is used', [by.X, by.Y].join(','), '2000,3000');
+}
 console.log(ok + ' checks passed');

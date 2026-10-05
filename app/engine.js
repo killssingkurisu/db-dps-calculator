@@ -129,7 +129,8 @@
 		Dazed: "Daze", Chilled42: "Chill", Cursed: "Curse", MinorCurse: "Lich curse", Scorched: "Scorch",
 		NovaRank1: "Ice root", RootStrikeRank1: "Entangle", VineLance: "Root", Frigid: "Frigid", Intimidate: "Weaken 75%",
 		ChaosWeaken: "Chaos weaken", Sacred: null, FrozenWardDelay: null, LightningBomb: "Lightning bomb",
-		PlagueBattalion: null, Infested3: "Infest", MeteorROR10: null, FireBrandRank8: null, HatePulse: null
+		PlagueBattalion: null, Infested3: "Infest", MeteorROR10: null, FireBrandRank8: null, HatePulse: null,
+		RuneReduceArmor: "Armor Breaker slow", RuneEnfeeble: "Weaken (rune)"
 	};
 
 	function data() { return root.DBB_DATA; }
@@ -784,22 +785,30 @@
 			var dur = sb.durationMs ? sb.durationMs + env.buffTime(sb.buff) : Infinity;
 			for (var i = selfIv.length - 1; i >= 0; i--) {
 				var iv = selfIv[i];
-				if (iv.sb.buff === sb.buff && iv.end >= at) { iv.end = Math.max(iv.end, at + dur); return; }
+				if (iv.sb.buff === sb.buff && iv.end >= at) {
+					iv.end = Math.max(iv.end, at + dur);
+					iv.castAt = at;
+					return;
+				}
 			}
-			selfIv.push({ start: at, end: at + dur, sb: sb, source: source });
+			selfIv.push({ start: at, end: at + dur, castAt: at, sb: sb, source: source });
 		}
+		// The most recently cast override is the one your basic attacks use.
 		function overrideAt(at) {
 			var best = null;
 			selfIv.forEach(function (iv) {
 				var o = env.basic.ranged ? iv.sb.rangedOverride : iv.sb.meleeOverride;
-				if (o && iv.start <= at && at < iv.end && (!best || iv.start >= best.start)) best = { start: iv.start, info: o, source: iv.source };
+				if (o && iv.start <= at && at < iv.end && iv.castAt <= at && (!best || iv.castAt >= best.castAt)) best = { castAt: iv.castAt, info: o, source: iv.source };
 			});
 			return best;
 		}
+		// Attack buffs count for hits after they start; Expertise buffs for DoTs applied from that moment.
 		function selfMods(at) {
 			var m = { melee: 0, magic: 0 };
 			selfIv.forEach(function (iv) {
-				if (iv.start < at && at < iv.end) { m.melee += iv.sb.melee || 0; m.magic += iv.sb.magic || 0; }
+				if (at >= iv.end) return;
+				if (iv.start < at) m.melee += iv.sb.melee || 0;
+				if (iv.start <= at) m.magic += iv.sb.magic || 0;
 			});
 			return m;
 		}
@@ -1016,6 +1025,7 @@
 			while (nextSample < to && nextSample < W) {
 				var at = nextSample;
 				var seen = {};
+				advanceDots(at);
 				sampleCount++;
 				Object.keys(debuffs).forEach(function (name) {
 					var d = active(name, at);
@@ -1047,8 +1057,7 @@
 			Object.keys(dots).forEach(function (b) {
 				var d = dots[b];
 				var base = env.dot(b);
-				while (d.stacks.length && d.next <= to && d.next <= W) {
-					if (d.next > d.expiry) { d.stacks = []; break; }
+				while (d.stacks.length && d.next <= to && d.next <= W && d.next <= d.expiry) {
 					var conds = targetConds(d.next);
 					var vs = dotVsMult(env.tal, b, conds).mult;
 					var tick = 0;
@@ -1061,7 +1070,6 @@
 					removeOnDamage(d.next);
 					d.next += DOT_TICK_MS;
 				}
-				if (d.next > d.expiry) d.stacks = [];
 			});
 		}
 
@@ -1309,6 +1317,8 @@
 		CONDITIONS: CONDITIONS, SELF_CONDITIONS: SELF_CONDITIONS, OPPOSITE: OPPOSITE, SLOTS_TOTAL: SLOTS_TOTAL,
 		ARMOR_BREAKS: ARMOR_BREAKS, ARMOR_BANE_MAX: ARMOR_BANE_MAX, SCORCH_BASE_MAX: SCORCH_BASE_MAX,
 		RETRIBUTION: RETRIBUTION, DEFAULT_WINDOW_S: DEFAULT_WINDOW_S,
-		MANA_MAX: MANA_MAX, MASTER_MANA_MAX: MASTER_MANA_MAX, MASTER_MANA_RATIO: MASTER_MANA_RATIO
+		MANA_MAX: MANA_MAX, MASTER_MANA_MAX: MASTER_MANA_MAX, MASTER_MANA_RATIO: MASTER_MANA_RATIO,
+		// For tools/check_engine.js.
+		_internal: { simulateCombo: simulateCombo, makeDotBase: makeDotBase }
 	};
 })(typeof window !== "undefined" ? window : globalThis);
