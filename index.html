@@ -3,32 +3,38 @@
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-	<title>Dungeon Blitz Build Calculator</title>
-	<meta name="description" content="Plan Dungeon Blitz builds: talents, gear, charms and runes, with final stats and skill damage at level 50.">
+	<title>Dungeon Blitz DPS Calculator</title>
+	<meta name="description" content="Dungeon Blitz DPS Calculator: plan level 50 builds with talents, gear, runes and charms, and see stats, skill damage and combo DPS with its damage distribution.">
 	<link rel="shortcut icon" href="favicon.ico">
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:ital,wght@0,400;0,500;0,700;1,400&family=Grenze:wght@600;700&display=swap">
-	<link rel="stylesheet" href="app/app.css?v=1">
-	<script src="talents/js/talent-data.js?v=60"></script>
-	<script src="talents/js/mage-data.js?v=2"></script>
-	<script src="talents/js/viperblade-data.js?v=2"></script>
-	<script src="talents/js/soulthief-data.js?v=2"></script>
-	<script src="talents/js/sentinel-data.js?v=1"></script>
-	<script src="talents/js/justicar-data.js?v=1"></script>
-	<script src="talents/js/templar-data.js?v=1"></script>
-	<script src="app/data/game-data.js?v=1"></script>
-	<script src="app/engine.js?v=1"></script>
-	<script src="app/app.js?v=1" defer></script>
+	<link rel="stylesheet" href="app/app.css?v=2">
+	<script>
+		// Pop-out combo window: style it before first paint.
+		if (/[?&]view=combos(&|$)/.test(location.search)) document.documentElement.className += " popout";
+	</script>
+	<script src="talents/js/talent-data.js?v=61"></script>
+	<script src="talents/js/mage-data.js?v=3"></script>
+	<script src="talents/js/viperblade-data.js?v=3"></script>
+	<script src="talents/js/soulthief-data.js?v=3"></script>
+	<script src="talents/js/sentinel-data.js?v=2"></script>
+	<script src="talents/js/justicar-data.js?v=2"></script>
+	<script src="talents/js/templar-data.js?v=2"></script>
+	<script src="app/data/game-data.js?v=2"></script>
+	<script src="app/combos.js?v=1"></script>
+	<script src="app/engine.js?v=2"></script>
+	<script src="app/app.js?v=2" defer></script>
 </head>
 <body>
 	<header class="topbar">
 		<div class="topbar-inner">
-			<h1 class="brand">Dungeon Blitz Build Calculator</h1>
-			<label class="field field-inline">
+			<h1 class="brand"><span class="brand-game">Dungeon Blitz</span> DPS Calculator</h1>
+			<label class="field field-inline discipline-field">
 				<span class="field-label">Discipline</span>
 				<select id="discipline"></select>
 			</label>
+			<span class="popout-discipline" id="popout-discipline"></span>
 			<div class="topbar-actions">
 				<label class="field field-inline">
 					<span class="field-label">Compare with</span>
@@ -44,7 +50,7 @@
 		<section class="panel talents-panel" aria-labelledby="talents-title">
 			<div class="panel-head">
 				<h2 id="talents-title">Talents</h2>
-				<p class="panel-note">Socket talentstones here. Their bonuses flow into the character sheet.</p>
+				<p class="panel-note">Socket talentstones here. Their bonuses flow into the character sheet and the combo DPS.</p>
 			</div>
 			<div class="talents-frame-wrap">
 				<iframe id="talents-frame" title="Talent calculator"></iframe>
@@ -87,6 +93,7 @@
 						<h2 id="target-title">Target and situation</h2>
 					</div>
 					<div class="field-grid" id="target-fields"></div>
+					<p class="panel-note target-note">Armor Bane, Armor Breaker and Scorch set here apply to the skill damage list. Combos put up their own debuffs as they play.</p>
 					<div class="situations" id="situations"></div>
 				</section>
 
@@ -107,56 +114,91 @@
 			</div>
 
 			<aside class="sheet" aria-label="Results">
-				<section class="panel" aria-labelledby="stats-title">
-					<div class="panel-head">
-						<h2 id="stats-title">Character sheet</h2>
-						<p class="panel-note" id="sheet-sub"></p>
-					</div>
-					<table class="stat-table" id="stat-table"></table>
-				</section>
+				<div class="sheet-tabs" role="tablist" aria-label="Results">
+					<button type="button" role="tab" id="tab-character" aria-controls="view-character" data-view="character">Character</button>
+					<button type="button" role="tab" id="tab-combos" aria-controls="view-combos" data-view="combos">Combo DPS</button>
+				</div>
 
-				<section class="panel" aria-labelledby="crit-title">
-					<div class="panel-head">
-						<h2 id="crit-title">Critical hits</h2>
-					</div>
-					<div id="crit-body"></div>
-				</section>
+				<div class="sheet-view" id="view-character" role="tabpanel" aria-labelledby="tab-character">
+					<button type="button" class="best-combo" id="best-combo"></button>
 
-				<section class="panel" aria-labelledby="skills-title">
-					<div class="panel-head">
-						<h2 id="skills-title">Skill damage</h2>
-						<label class="field field-inline">
-							<span class="field-label">Skill rank</span>
-							<select id="skill-rank"></select>
-						</label>
-					</div>
-					<div class="legend" aria-hidden="true">
-						<span><i class="swatch swatch-direct"></i>Attack (direct hits, with crits)</span>
-						<span><i class="swatch swatch-dot"></i>Expertise (damage over time)</span>
-					</div>
-					<div id="skills-body"></div>
-				</section>
+					<section class="panel" aria-labelledby="stats-title">
+						<div class="panel-head">
+							<h2 id="stats-title">Character sheet</h2>
+							<p class="panel-note" id="sheet-sub"></p>
+						</div>
+						<table class="stat-table" id="stat-table"></table>
+					</section>
 
-				<section class="panel" aria-labelledby="dots-title">
-					<div class="panel-head">
-						<h2 id="dots-title">Damage over time</h2>
-					</div>
-					<div id="dots-body"></div>
-				</section>
+					<section class="panel" aria-labelledby="crit-title">
+						<div class="panel-head">
+							<h2 id="crit-title">Critical hits</h2>
+						</div>
+						<div id="crit-body"></div>
+					</section>
 
-				<section class="panel" aria-labelledby="talent-fx-title">
-					<details class="disclosure">
-						<summary><h2 id="talent-fx-title">Talentstone effects</h2></summary>
-						<div id="talent-fx"></div>
-					</details>
-				</section>
+					<section class="panel" aria-labelledby="skills-title">
+						<div class="panel-head">
+							<h2 id="skills-title">Skill damage</h2>
+							<label class="field field-inline">
+								<span class="field-label">Skill rank</span>
+								<select id="skill-rank"></select>
+							</label>
+						</div>
+						<div class="legend" aria-hidden="true">
+							<span><i class="swatch swatch-direct"></i>Attack (direct hits, with crits)</span>
+							<span><i class="swatch swatch-dot"></i>Expertise (damage over time)</span>
+						</div>
+						<div id="skills-body"></div>
+					</section>
 
-				<section class="panel" aria-labelledby="method-title">
-					<details class="disclosure">
-						<summary><h2 id="method-title">How the numbers are worked out</h2></summary>
-						<div class="method" id="method"></div>
-					</details>
-				</section>
+					<section class="panel" aria-labelledby="dots-title">
+						<div class="panel-head">
+							<h2 id="dots-title">Damage over time</h2>
+						</div>
+						<div id="dots-body"></div>
+					</section>
+
+					<section class="panel" aria-labelledby="talent-fx-title">
+						<details class="disclosure">
+							<summary><h2 id="talent-fx-title">Talentstone effects</h2></summary>
+							<div id="talent-fx"></div>
+						</details>
+					</section>
+
+					<section class="panel" aria-labelledby="method-title">
+						<details class="disclosure">
+							<summary><h2 id="method-title">How the numbers are worked out</h2></summary>
+							<div class="method" id="method"></div>
+						</details>
+					</section>
+				</div>
+
+				<div class="sheet-view" id="view-combos" role="tabpanel" aria-labelledby="tab-combos" hidden>
+					<section class="panel combo-window" aria-labelledby="combo-title">
+						<div class="panel-head">
+							<h2 id="combo-title">Combo DPS</h2>
+							<div class="combo-tools">
+								<label class="field field-inline">
+									<span class="field-label">Fight length</span>
+									<select id="combo-length"></select>
+								</label>
+								<button type="button" class="btn btn-small" id="combo-popout">Open in new window</button>
+							</div>
+						</div>
+						<p class="panel-note" id="combo-intro"></p>
+						<div class="combo-list" id="combo-list" role="radiogroup" aria-label="Combos"></div>
+						<div class="combo-detail" id="combo-detail"></div>
+					</section>
+
+					<section class="panel" aria-labelledby="builder-title">
+						<div class="panel-head">
+							<h2 id="builder-title">Your combo</h2>
+							<p class="panel-note">Build a loop of your own; it shows up in the list above.</p>
+						</div>
+						<div id="combo-builder"></div>
+					</section>
+				</div>
 			</aside>
 		</div>
 	</main>

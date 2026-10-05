@@ -115,8 +115,8 @@ DOT_KINDS = OrderedDict([
     ("bleed", {"name": "Bleed", "buffs": ["Bleeding"], "tickPct": 6, "stacks": 15}),
     ("poisonRogue", {"name": "Poison (rogue)", "buffs": ["PoisonStrike"], "tickPct": 60, "stacks": 3, "poison": True}),
     ("runePoison", {"name": "Poison (Poison Strike rune)", "buffs": ["RunePoisonStrike"], "poison": True}),
-    ("daggerPoison", {"name": "Dagger poison", "buffs": ["DaggerPoison"], "poison": True}),
-    ("flurryPoison", {"name": "Flurry poison", "buffs": ["FlurryPoison"], "tickPct": 60, "stacks": 3, "poison": True}),
+    # "Flurry poison" in the mechanics notes is the poison Flurry of Daggers applies.
+    ("daggerPoison", {"name": "Flurry poison", "buffs": ["DaggerPoison"], "tickPct": 60, "stacks": 3, "poison": True}),
     ("chaosPoison", {"name": "Chaos poison", "buffs": ["ChaosPoison"], "tickPct": 30, "stacks": 3, "poison": True}),
     ("poisonMage", {"name": "Poison (mage)", "buffs": ["PoisonCloud", "RunePoisonCloud"], "tickPct": 30, "stacks": 3, "poison": True}),
     ("decoyPoison", {"name": "Decoy poison", "buffs": ["RuneDecoy"], "poison": True}),
@@ -131,12 +131,13 @@ DOT_KINDS = OrderedDict([
     ("holyFire", {"name": "Holy fire", "buffs": ["HolyFire%d" % i for i in range(1, 6)], "tickPct": 30, "stacks": 2, "rankedFrom": "HolyFire1"}),
     ("ignite", {"name": "Ignite", "buffs": ["Ignite"], "tickPct": 15, "stacks": 5}),
     ("haunted", {"name": "Haunted", "buffs": ["Haunted"]}),
-    ("soulReaver", {"name": "Soul Reaver", "buffs": ["SoulReaver%d" % i for i in range(1, 11)]}),
+    ("soulReaver", {"name": "Soul Reaver", "buffs": ["SoulReaver%d" % i for i in range(1, 11)], "tickPct": 120, "rankedFrom": "SoulReaver1", "lifesteal": True}),
 ])
 
-# How a talent's displayed "+X%" maps to flat DoTDamage (= game BuffValue / X).
-DOT_TALENT_REF = {"Bleeding": 0.2, "Burned": 1 / 3, "Chilblains": 1 / 3, "Ignite": 0.5, "Bound": 1.0,
-                  "PoisonStrike": 1.0, "ProcMassiveTimeBuff": 1.0}
+# Powers aimed at yourself or allies: their multipliers are heals or unused, not damage.
+NON_HOSTILE_TARGETS = {"Self", "Friend", "GroupAndSelf", "AuraFriend", "RangedAoEFriend", "UndeadPet"}
+# Aura powers tick on their own; the caster is only busy for the first cast entry.
+AURA_TARGETS = {"Aura", "AuraFriend"}
 
 
 def read(path):
@@ -315,61 +316,179 @@ def build_dots(buffs):
     return dots
 
 
-def first_buffs(raw):
-    """AddTargetBuff -> list of buff names; First:/Last:/Append: prefixes dropped."""
-    out = []
+def target_buffs(raw):
+    """AddTargetBuff -> (rule, names). How the client applies the list on a power with
+    several pulses (one pulse per CastTime entry, CombatState in DungeonBlitz.swf):
+    no prefix = on every pulse, First: = first pulse only, Last: = last pulse only,
+    Sequence: = the i-th buff on the i-th pulse. FirstTarget: only limits which of
+    several targets get it, so against one target it acts like no prefix."""
+    raw = raw.strip()
+    rule = "every"
+    for prefix, r in (("First:", "first"), ("Last:", "last"), ("Sequence:", "seq"), ("FirstTarget:", "every")):
+        if raw.startswith(prefix):
+            rule = r
+            raw = raw[len(prefix):]
+            break
+    names = []
     for part in raw.split(","):
         part = part.strip()
-        if not part or part.startswith("Sequence:"):
-            part = part.split(":", 1)[-1] if part else part
         if ":" in part:
             part = part.split(":", 1)[1]
         if part:
-            out.append(part)
-    return out
+            names.append(part)
+    return rule, names
+
+
+def ms_list(raw):
+    return [int(num(c)) for c in raw.split(",") if c.strip()]
+
+
+# Basic attacks and their stand-ins: the 3-hit chain powers. Buffs land on every third hit.
+COMBO_TARGETS = {"MeleeCombo", "ProjectileCombo"}
+# Basic-attack overrides with this many pulses are held channels (Pyromania's flamethrower):
+# one pulse is one basic attack.
+CHANNEL_PULSES = 10
 
 
 def build_skills(xml_dir, dots):
     pxml = read(os.path.join(xml_dir, "PlayerPowerTypes.xml"))
     powers = {n: b for n, b in re.findall(r'<Power PowerName="([^"]*)">(.*?)</Power>', pxml, re.S)}
+    bxml = read(os.path.join(xml_dir, "PlayerBuffTypes.xml"))
+    buff_defs = {n: b for n, b in re.findall(r'<BuffType BuffName="([^"]*)">(.*?)</BuffType>', bxml, re.S)}
     axml = read(os.path.join(xml_dir, "AbilityTypes.xml"))
     dot_buffs = {}
     for key, d in dots.items():
         for b in d["buffs"]:
             dot_buffs[b] = key
+    used_buffs = set()
 
-    def power_info(name, depth=0):
+    def split_buffs(names):
+        dots_applied, debuffs = defaultdict(int), defaultdict(int)
+        for b in names:
+            used_buffs.add(b)
+            if b in dot_buffs:
+                dots_applied[b] += 1
+            else:
+                debuffs[b] += 1
+        return dict(dots_applied), dict(debuffs)
+
+    def self_buff(bname, depth, extra_ms=0, on_damage=False):
+        """A buff on yourself, kept only if it changes your damage."""
+        body = buff_defs.get(bname)
+        if body is None:
+            return None
+        out = {"buff": bname, "durationMs": int(num(tag("Duration", body), 0))}
+        if out["durationMs"] and extra_ms:
+            out["durationMs"] += extra_ms
+        melee, magic = num(tag("MeleeDamage", body)), num(tag("MagicDamage", body))
+        if melee > 0:
+            out["melee"] = melee
+        if magic > 0:
+            out["magic"] = magic
+        if tag("Effect", body) == "Stealthed":
+            out["stealth"] = True
+        for key, field in (("meleeOverride", "MeleeOverride"), ("rangedOverride", "RangedOverride")):
+            pname = tag(field, body)
+            if pname and depth < 3:
+                info = power_info(pname, depth + 1, override=True)
+                if info and info["mults"]:
+                    out[key] = info
+        if on_damage:
+            out["onDamage"] = True
+        return out if any(k in out for k in ("melee", "magic", "stealth", "meleeOverride", "rangedOverride")) else None
+
+    def power_info(name, depth=0, override=False):
         body = powers.get(name)
         if body is None:
             return None
+        target = tag("TargetMethod", body)
+        hostile = target not in NON_HOSTILE_TARGETS
         mults = [num(v) for v in tag("BaseDamageMult", body).split(",") if v.strip()] or [0.0]
-        casts = [c for c in tag("CastTime", body).split(",") if c.strip()]
-        hits = len(mults) if len(mults) > 1 else max(1, len(casts))
-        if len(mults) == 1:
-            mults = mults * hits
-        dmg_mults = [m for m in mults if m > 0]
-        applied = defaultdict(int)
-        for b in first_buffs(tag("AddTargetBuff", body)):
-            if b in dot_buffs:
-                applied[b] += 1
-        info = {"power": name, "mults": [round(m, 4) for m in dmg_mults], "dots": dict(applied),
-                "target": tag("TargetMethod", body)}
+        casts = ms_list(tag("CastTime", body))
+        recover = int(num(tag("RecoverTime", body)))
+        channel = override and len(casts) >= CHANNEL_PULSES
+        if channel:
+            casts, recover = [casts[1] if len(casts) > 1 else casts[0]], 0
+        # One pulse per CastTime entry; pulse i uses BaseDamageMult[i], or the first value.
+        pulses = max(1, len(casts))
+        offsets, acc = [], 0
+        for i in range(pulses):
+            acc += casts[i] if i < len(casts) else 0
+            offsets.append(acc)
+        hit_list = []
+        for i in range(pulses):
+            m = mults[i] if i < len(mults) else mults[0]
+            if m > 0 and hostile:
+                hit_list.append((round(m, 4), offsets[i]))
+        rule, names = target_buffs(tag("AddTargetBuff", body)) if hostile else ("every", [])
+        if target in COMBO_TARGETS:
+            rule = "third"
+        info = {"power": name, "target": target, "mults": [h[0] for h in hit_list], "hitAt": [h[1] for h in hit_list]}
+        if rule == "seq":
+            info["apply"] = {"rule": "seq", "steps": [dict(zip(("dots", "debuffs"), split_buffs([n]))) for n in names]}
+        elif names:
+            d, b = split_buffs(names)
+            info["apply"] = {"rule": rule, "dots": d, "debuffs": b}
+        if names:
+            info["pulseAt"] = offsets
+        if tag("ProcModifier", body) == "0":
+            info["noCrit"] = True
+        busy = (casts[0] if casts else 0) if target in AURA_TARGETS else sum(casts)
+        info["busyMs"] = busy + recover
+        info["lastAt"] = offsets[-1] if offsets else 0
+        cd = int(num(tag("CoolDownTime", body)))
+        if cd:
+            info["cooldownMs"] = cd
+        # ManaCost is "cost" or "cost,gain": basic attacks are "0,5", +5 mana per hit.
+        mana_parts = tag("ManaCost", body).split(",")
+        mana = num(mana_parts[0])
+        if mana:
+            info["mana"] = mana
+        if len(mana_parts) > 1 and num(mana_parts[1]):
+            info["manaGain"] = num(mana_parts[1])
+        if tag("FromMasterMana", body).upper() == "TRUE":
+            info["masterMana"] = True
+        # Buffs on yourself that change your damage, including self-targeted AddTargetBuff.
+        selfs = []
+        aura_extra = (sum(casts) - casts[0]) if (target in AURA_TARGETS and casts) else 0
+        raw_self = tag("AddSelfBuff", body)
+        on_damage = raw_self.startswith("OnDamage:")
+        for part in raw_self.split(","):
+            part = part.strip().split(":", 1)[-1].strip()
+            sb = self_buff(part, depth, aura_extra, on_damage) if part else None
+            if sb:
+                selfs.append(sb)
+        if not hostile and target in ("Self", "GroupAndSelf", "AuraFriend"):
+            for part in target_buffs(tag("AddTargetBuff", body))[1]:
+                sb = self_buff(part, depth, aura_extra)
+                if sb:
+                    selfs.append(sb)
+        if selfs:
+            info["self"] = selfs
+            info["selfAt"] = hit_list[0][1] if (on_damage and hit_list) else (casts[0] if casts else 0)
+        if override:
+            return info
         combo = tag("ComboName", body)
         chained = []
         if combo and depth < 3:
             for c in combo.split(","):
                 sub = power_info(c.strip(), depth + 1)
-                if sub:
+                if sub and (sub["mults"] or sub.get("apply") or sub.get("self")):
                     chained.append(sub)
         # Damage that comes from a spawned explosion or a follow-up power.
-        if not dmg_mults and depth == 0:
+        if not info["mults"] and depth == 0:
             base = re.sub(r"\d+$", "", name)
             rank = name[len(base):]
             for suffix in ("Close", "Explode", "Attack", "Combo"):
                 sub = power_info(base + suffix + rank, depth + 1) or power_info(base + suffix, depth + 1)
-                if sub and (sub["mults"] or sub["dots"]) and all(sub["power"] != c["power"] for c in chained):
+                if sub and (sub["mults"] or sub.get("apply")) and all(sub["power"] != c["power"] for c in chained):
                     chained.append(sub)
                     break
+        if target == "Charge" and any("Close" in c["power"] for c in chained):
+            # The charge stops when it reaches the target; next to it, that is the
+            # wind-up plus one pulse, and the Close power takes over from there.
+            info["busyMs"] = (casts[0] + (casts[1] if len(casts) > 1 else 0)) if casts else 0
+            info["lastAt"] = info["busyMs"]
         if chained:
             info["chain"] = chained
         return info
@@ -403,7 +522,18 @@ def build_skills(xml_dir, dots):
             "hotbar": int(num(tag("HotbarLocation", body))), "category": tag("Category", body),
             "type": tag("Type", body), "ranks": ranks,
         })
-    return by_class
+
+    meta = OrderedDict()
+    for b in sorted(used_buffs):
+        body = buff_defs.get(b)
+        if body is None:
+            continue
+        meta[b] = {"durationMs": int(num(tag("Duration", body), 5000)), "stacks": int(num(tag("StackCount", body), 1)) or 1,
+                   "speed": num(tag("SpeedChange", body)), "defense": num(tag("MeleeDefense", body)),
+                   "damage": num(tag("MeleeDamage", body)), "effect": tag("Effect", body)}
+        if tag("RemoveOnDamage", body).lower() == "true":
+            meta[b]["removeOnDamage"] = True
+    return by_class, meta
 
 
 def build_charms(classic_dir):
@@ -431,6 +561,7 @@ def main():
     mods = parse_mods(args.xml)
     buffs = parse_buffs(args.xml)
     dots = build_dots(buffs)
+    skills, target_meta = build_skills(args.xml, dots)
     data = OrderedDict([
         ("meta", {"level": LEVEL, "gearScale": GEAR_SCALE,
                   "note": "Generated by tools/extract_game_data.py from Dungeon Blitz game files."}),
@@ -443,8 +574,8 @@ def main():
         ("skillRunes", build_skill_runes(mods)),
         ("charms", build_charms(args.classic)),
         ("dots", dots),
-        ("dotTalentRef", DOT_TALENT_REF),
-        ("skills", build_skills(args.xml, dots)),
+        ("skills", skills),
+        ("targetBuffs", target_meta),
         ("talentEffects", build_talent_effects(mods)),
     ])
     out = os.path.abspath(args.out)

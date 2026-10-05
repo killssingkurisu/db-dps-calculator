@@ -1,5 +1,5 @@
 /*
- * Lets the build calculator (the parent page) embed this talent calculator.
+ * Lets the DPS calculator (the parent page) embed this talent calculator.
  * Posts the current build string and page height to the parent, and loads a
  * build when the parent asks. Does nothing when the page is opened on its own.
  */
