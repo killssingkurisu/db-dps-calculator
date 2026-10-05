@@ -517,13 +517,17 @@
 		};
 	}
 
+	// Several stones of the same kind (two Contact Poison) add up, as the game sums mods.
 	function dotVsMult(tal, buff, conds) {
-		var m = 1;
+		var sum = 0;
 		var notes = [];
 		tal.dotVs.forEach(function (e) {
-			if (e.targets.indexOf(buff) >= 0 && conds[e.cond]) { m *= 1 + e.value; notes.push(e.source); }
+			if (e.targets.indexOf(buff) >= 0 && conds[e.cond]) {
+				sum += e.value;
+				if (notes.indexOf(e.source) < 0) notes.push(e.source);
+			}
 		});
-		return { mult: m, notes: notes };
+		return { mult: 1 + sum, notes: notes };
 	}
 
 	function skillRuneEffects(keys) {

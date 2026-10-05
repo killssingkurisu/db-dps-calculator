@@ -189,6 +189,15 @@ for (const disc of D.disciplines) {
 	for (let t = 450; t < 5000; t += 1500) if (t + 600 <= 5000) hits++;
 	check('Hawk Strike after Armor Breaker', hs.direct / hits, 5.9 * 3914 * 1.5, 1e-6);
 }
+// 16b. Two Contact Poison stones add up (+30% + 30% = +60%), they don't multiply.
+{
+	const tid = talentIndex(3, 'Contact Poison');
+	const s = bare(3);
+	s.talents = '3' + '0' + '5' + ENC[tid] + '0' + '5' + ENC[tid];
+	s.target.states = { bleeding: true };
+	const fp = E.compute(s).dots.find(d => d.buff === 'DaggerPoison');
+	check('two Contact Poison 5/5 vs bleeding', fp.vsMult, 1.6, 1e-9);
+}
 // 17. Simulation edge cases on made-up skills.
 {
 	const I = E._internal;
