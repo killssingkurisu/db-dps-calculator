@@ -145,13 +145,16 @@
 		return null;
 	}
 
+	// Links always open the full calculator, even when copied from the pop-out combo window.
 	function shareUrl() {
-		return location.href.split("#")[0] + "#b=" + toB64(JSON.stringify(state));
+		return location.origin + location.pathname + "#b=" + toB64(JSON.stringify(state));
 	}
 
 	function persist() {
 		storeSet(LAST_KEY, state);
 		try { history.replaceState(null, "", "#b=" + toB64(JSON.stringify(state))); } catch (e) { /* ignore */ }
+		var full = document.getElementById("full-link");
+		if (full) full.href = location.pathname + "#b=" + toB64(JSON.stringify(state));
 	}
 
 	function currentDisc() {

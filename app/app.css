@@ -875,6 +875,9 @@ input[type="number"] {
 .builder-tools select { width: 100%; }
 
 /* ---------- pop-out combo window ---------- */
+.popout-only { display: none; }
+.popout .popout-only { display: inline-flex; align-items: center; text-decoration: none; color: var(--parchment); }
+
 .popout .talents-panel,
 .popout .inputs,
 .popout .sheet-tabs,
