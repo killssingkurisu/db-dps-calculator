@@ -35,14 +35,10 @@
 		showTalents(currentDiscipline !== disciplineId ? 0 : 200, 200, slots);
 	};
 
-	// Sockets 0 (2/2) and 1 (5/5) start open. Socket 2 (3/3) also needs 5 spent points,
-	// on top of its connection to socket 0.
-	var SOCKET_POINT_GATES = { 2: 5 };
-
-	function socketGateMet(slotId) {
-		return !SOCKET_POINT_GATES.hasOwnProperty(slotId) || DBCalc.points_spent >= SOCKET_POINT_GATES[slotId];
-	}
-
+	// Sockets 0 (2/2) and 1 (5/5) start open. As in the game client's talent screen, every
+	// other socket opens as soon as a socket connected to it holds a talentstone with at
+	// least 1 point (the first 3/3 opens with 1 point in the 2/2 before it). Only the
+	// ability slots also need spent points (20 and 40).
 	window.unlockFirstSlots = function () {
 		[0, 1].forEach(function (slotId) {
 			$("#tree_slot_" + slotId).removeClass("closed");
@@ -50,7 +46,7 @@
 		});
 	};
 
-	// Recompute every socket from scratch whenever a connection would open, so point gates hold.
+	// Recompute every socket from scratch whenever a connection would open.
 	window.unlockSlotConnections = function () {
 		window.updateSocketsLock();
 	};
@@ -70,7 +66,7 @@
 				DBCalc.talent_slots[i].locked = false;
 				for (j = 0; j < DBCalc.talent_slots[i].connections.length; j++) {
 					id = DBCalc.talent_slots[i].connections[j];
-					if ((!skillSocketLock || id <= skillSocketLock) && socketGateMet(id)) DBCalc.talent_slots[id].locked = false;
+					if (!skillSocketLock || id <= skillSocketLock) DBCalc.talent_slots[id].locked = false;
 				}
 			}
 		}
