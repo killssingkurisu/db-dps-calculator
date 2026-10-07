@@ -839,7 +839,16 @@ a.btn { display: inline-flex; align-items: center; color: var(--parchment); text
 .combo-card.on { border-color: var(--rune); box-shadow: inset 3px 0 0 var(--rune); }
 
 .combo-name { font-weight: 700; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
-.combo-steps { color: var(--parchment-dim); font-size: 0.86rem; overflow-wrap: anywhere; }
+.combo-steps {
+	color: var(--parchment-dim);
+	font-size: 0.86rem;
+	overflow-wrap: anywhere;
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 4;
+	line-clamp: 4;
+	overflow: hidden;
+}
 .combo-dps { font-variant-numeric: tabular-nums; }
 .combo-dps .delta { display: inline; margin-left: 6px; }
 
@@ -986,8 +995,24 @@ a.btn { display: inline-flex; align-items: center; color: var(--parchment); text
 
 .combos-bar-tools .field { flex-direction: row; align-items: center; gap: 8px; }
 
-#combos-character, #combos-party { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
-#combos-character[hidden], #combos-party[hidden] { display: none; }
+#combos-character, #combos-party, #combos-meter { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+#combos-character[hidden], #combos-party[hidden], #combos-meter[hidden], #window-panel[hidden] { display: none; }
+
+/* A saved combo: what the game measured, next to the simulation. */
+.combo-measured { color: var(--rune-pale); font-size: 0.86rem; }
+
+.measured {
+	display: grid;
+	gap: 6px;
+	margin: 12px 0 4px;
+	padding: 10px 14px 12px;
+	background: var(--stone-inset);
+	border: 1px solid var(--moss-soft);
+	border-left: 3px solid var(--rune-pale);
+	border-radius: 6px;
+}
+
+.measured .settings-actions { margin-top: 4px; }
 
 /* ---------- combo builder: the cast order over a palette of skills ---------- */
 .builder-row {
@@ -1382,6 +1407,135 @@ a.btn { display: inline-flex; align-items: center; color: var(--parchment); text
 .inv-charm-list small { display: block; color: var(--parchment-dim); font-size: 0.85rem; }
 .inventory-panel h3 { margin-top: 12px; }
 
+/* ---------- Combos: runs from the DPS meter ---------- */
+.meter-panel.drop { border-color: var(--rune); box-shadow: 0 0 0 2px rgba(79, 208, 232, 0.35); }
+
+.runs-empty {
+	padding: 14px 16px;
+	border: 1px dashed var(--moss);
+	border-radius: 6px;
+	color: var(--parchment-dim);
+}
+
+.run-list { list-style: none; margin: 0; padding: 0; display: grid; }
+
+.run-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) repeat(3, 8.5em) 30px;
+	align-items: center;
+	gap: 6px 10px;
+	padding: 8px 0;
+	border-bottom: 1px solid var(--moss-soft);
+}
+
+.run-row.on { box-shadow: inset 3px 0 0 var(--rune); padding-left: 10px; }
+
+.run-head {
+	padding: 0 0 6px;
+	color: var(--parchment-dim);
+	font-size: 0.86rem;
+}
+
+.run-win-h { text-align: center; }
+
+.run-info { display: grid; gap: 1px; min-width: 0; }
+.run-name { font-family: var(--font-display); font-size: 1.15rem; font-weight: 600; overflow-wrap: anywhere; }
+.run-info small { color: var(--parchment-dim); font-size: 0.86rem; }
+
+.win-btn {
+	display: grid;
+	justify-items: center;
+	gap: 0;
+	min-height: 48px;
+	padding: 4px 6px;
+	background: var(--stone-inset);
+	border: 1px solid var(--moss-soft);
+	border-radius: 6px;
+	cursor: pointer;
+	line-height: 1.2;
+}
+
+.win-btn:hover { border-color: var(--parchment-dim); }
+.win-btn[aria-pressed="true"] { border-color: var(--rune); box-shadow: inset 0 0 0 1px var(--rune); background: var(--stone); }
+.win-btn.none { cursor: default; color: var(--parchment-dim); font-size: 0.86rem; align-content: center; }
+.win-len { display: none; color: var(--parchment-dim); font-size: 0.78rem; }
+.win-dps { font-variant-numeric: tabular-nums; font-weight: 500; color: var(--rune); font-size: 1.05rem; }
+.win-at { color: var(--parchment-dim); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.win-best { color: var(--rune); font-weight: 500; }
+.win-btn.best { border-color: var(--moss); }
+
+.window-pills { margin: 12px 0 14px; }
+.combo-window .stat-pills div { background: var(--stone-inset); }
+
+/* The window's casts on a strip as long as the window. */
+.rot-strip { margin-bottom: 12px; }
+
+.rot-track {
+	position: relative;
+	height: 30px;
+	background: var(--slate-deep);
+	border-radius: 4px;
+}
+
+.rot-mark {
+	position: absolute;
+	bottom: 0;
+	width: 3px;
+	margin-left: -1px;
+	border-radius: 1px;
+	background: var(--parchment-dim);
+	height: 35%;
+	opacity: 0.8;
+}
+
+.rot-mark.spell { height: 75%; background: var(--rune); opacity: 1; }
+.rot-mark.master { height: 100%; background: var(--rune-pale); opacity: 1; }
+
+.rot-axis {
+	position: relative;
+	height: 18px;
+	margin-top: 3px;
+	color: var(--parchment-dim);
+	font-size: 0.78rem;
+	font-variant-numeric: tabular-nums;
+}
+
+.rot-axis span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.rot-axis span:first-child { transform: none; }
+.rot-axis span:last-child { transform: translateX(-100%); }
+
+.rot-list {
+	list-style: none;
+	margin: 0 0 6px;
+	padding: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.rot-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	padding: 3px 9px 3px 6px;
+	background: var(--stone-inset);
+	border: 1px solid var(--moss);
+	border-radius: 5px;
+	font-size: 0.94rem;
+}
+
+.rot-item.master { border-color: var(--rune); }
+.rot-item.master .seq-slot { border-color: var(--rune); color: var(--rune); }
+.rot-item.basic { border-style: dashed; color: var(--parchment-dim); }
+.rot-t { color: var(--parchment-dim); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.rot-name { font-weight: 500; }
+.rot-item.basic .rot-name { font-weight: 400; }
+.rot-dmg { color: var(--parchment-dim); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+
+.save-block .save-form { margin-top: 10px; }
+.save-block > p + p { margin-top: 6px; }
+.saved-note { margin-top: 10px; color: var(--rune-pale); }
+
 /* ---------- Party tab ---------- */
 .member-grid {
 	display: grid;
@@ -1626,6 +1780,12 @@ html:not(.popout) .popout-only { display: none; }
 	.lane-who { min-width: 0; flex: 1 1 100%; }
 	.lane-dps { margin-left: 0; }
 	.account .cloud-state { margin-left: 0; flex-basis: 100%; }
+	.run-head { display: none; }
+	.run-row { grid-template-columns: repeat(3, minmax(0, 1fr)) 30px; }
+	.run-info { grid-column: 1 / 4; }
+	.run-remove { grid-column: 4; grid-row: 1; }
+	.win-len { display: block; }
+	.rot-dmg { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

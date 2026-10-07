@@ -4,9 +4,9 @@ const fs = require('fs'), vm = require('vm');
 const R = require('path').join(__dirname, '..') + '/';
 for (const f of ['app/data/game-data.js', 'talents/js/talent-data.js', 'talents/js/mage-data.js', 'talents/js/viperblade-data.js',
 	'talents/js/soulthief-data.js', 'talents/js/sentinel-data.js', 'talents/js/justicar-data.js', 'talents/js/templar-data.js',
-	'app/combos.js', 'app/engine.js', 'app/library.js'])
+	'app/combos.js', 'app/engine.js', 'app/library.js', 'app/meter.js'])
 	vm.runInThisContext(fs.readFileSync(R + f, 'utf8'), { filename: f });
-const E = window.DBB_ENGINE, D = window.DBB_DATA, T = window.DBCALC_TALENT_DATA, L = window.DBB_LIBRARY;
+const E = window.DBB_ENGINE, D = window.DBB_DATA, T = window.DBCALC_TALENT_DATA, L = window.DBB_LIBRARY, M = window.DBB_METER;
 const pending = [];
 
 function bare(disc) {
@@ -347,5 +347,85 @@ for (const disc of D.disciplines) {
 	check('scan carries talents for its class', withT.inventory.talents, '3225h');
 	const wrongT = L.parseScan(JSON.stringify({ format: 'dbb-inventory', version: 1, character: { name: 'x', class: 'Rogue', talents: '8115a' }, gear: [], charms: [{ key: 'attack', count: 1 }] }));
 	check('talents of another class are dropped', wrongT.inventory.talents, undefined);
+}
+// 20. DB DPS Launcher exports: every hit counts for the cast that caused it; best 5/10/20 s.
+{
+	const spell = (key, name, slotKey) => ({ key, name, slotKey });
+	// A made-up Viperblade fight: 2 melee hits, Withering Impact with a DoT, a lull, then
+	// Assassinate (DeathBlowOld in the live game) whose DoT ticks long after its cast.
+	const log = {
+		format: 'dbb-dps', version: 2, source: 'test', exportedAt: '2026-10-07T12:00:00Z',
+		character: { name: 'tester', class: '' },
+		fight: { startedAt: '2026-10-07T11:59:00Z', durationMs: 30000, dungeon: { name: 'Test Keep', endedBy: 'cleared' } },
+		spells: [spell('WitherStrike', 'Withering Impact', '1'), spell('DeathBlowOld', 'Assassinate', '3'), spell('MistWalk', 'Mist Walk', '4'),
+			spell('RapierMelee', 'Melee', null), spell('ProcMassiveTime', 'Hemorrhage', null), spell('Mystery', 'Mystery Skill', '2')],
+		rotation: { casts: [
+			{ atMs: 0, endMs: 500, key: 'basic', name: 'Melee', kind: 'melee', casts: 2, powerId: 969, castTimesMs: [0, 500] },
+			{ atMs: 1000, endMs: 1000, key: 'WitherStrike', kind: 'spell', slotKey: '1', casts: 1, powerId: 10, castTimesMs: [1000] },
+			{ atMs: 12000, endMs: 12000, key: 'DeathBlowOld', kind: 'spell', slotKey: '3', casts: 1, powerId: 20 },
+			{ atMs: 13000, endMs: 13000, key: 'MistWalk', kind: 'spell', slotKey: '4', casts: 1, powerId: 30 },
+			{ atMs: 14000, endMs: 14000, key: 'Mystery', kind: 'spell', slotKey: '2', casts: 1, powerId: 40 },
+			{ atMs: 20000, endMs: 22000, key: 'basic', name: 'Melee', kind: 'melee', casts: 3, powerId: 969 }
+		] },
+		hits: [
+			{ atMs: 100, powerId: 969, damage: 100, crit: false, kind: 'hit', target: 'A', spell: 'RapierMelee' },
+			{ atMs: 600, powerId: 969, damage: 100, crit: true, kind: 'hit', target: 'A', spell: 'RapierMelee' },
+			{ atMs: 1100, powerId: 10, damage: 1000, crit: false, kind: 'hit', target: 'A', spell: 'WitherStrike' },
+			{ atMs: 2000, powerId: 10, damage: 500, crit: false, kind: 'dot', target: 'A', spell: 'WitherStrike' },
+			{ atMs: 12100, powerId: 20, damage: 2000, crit: false, kind: 'hit', target: 'B', spell: 'DeathBlowOld' },
+			{ atMs: 19000, powerId: 20, damage: 3000, crit: false, kind: 'dot', target: 'B', spell: 'DeathBlowOld' },
+			{ atMs: 19500, powerId: 99, damage: 400, crit: false, kind: 'dot', target: 'B', spell: 'ProcMassiveTime' },
+			{ atMs: 20100, powerId: 969, damage: 50, crit: false, kind: 'hit', target: 'B', spell: 'RapierMelee' }
+		]
+	};
+	const res = M.parse(JSON.stringify(log), 'test.json');
+	check('meter export reads', !!res.run, true);
+	const run = res.run;
+	check('class from the skills used', run.character.class, 'Rogue');
+	check('discipline from the master skills', run.discipline, 3);
+	check('DeathBlowOld is the calculator\'s Assassinate', run.spells.find(x => x.key === 'DeathBlowOld').calc, 'Assassinate');
+	check('fight damage', run.fight.damage, 7150);
+	const w5 = run.windows.find(x => x.seconds === 5);
+	check('best 5 s starts at Assassinate', w5.startMs, 12000);
+	// Assassinate's hit and its DoT tick 7 s later, and the Hemorrhage proc that the latest cast (Mystery) gets.
+	check('a DoT tick after the window counts for its cast', w5.damage, 2000 + 3000 + 400);
+	check('5 s DPS', w5.dps, 1080);
+	check('only the damage landed inside counts as landed', w5.landedDps, 2000 / 5);
+	check('basic attacks count for their own run', run.windows.find(x => x.seconds === 10).damage, 2000 + 3000 + 400 + 50);
+	const w20 = run.windows.find(x => x.seconds === 20);
+	check('best 20 s', w20.startMs + ' ' + w20.damage, '0 7100');
+	check('basic attacks spread over their run without cast times', M._internal.expandCasts([log.rotation.casts[5]], () => 'RapierMelee').map(p => p.t).join(), '20000,21000,22000');
+	check('cast times used when the export has them', M._internal.expandCasts([log.rotation.casts[0]], () => 'RapierMelee').map(p => p.t).join(), '0,500');
+	const st = M.stepsFor(run, w20);
+	check('steps for the combo', st.steps.join(' '), 'basic basic WitherStrike Assassinate MistWalk');
+	check('a skill the calculator lacks is named', st.missing.join(), 'Mystery Skill');
+	check('rotation text', M.rotationText(run, w20), 'MA2 s1 s3 s4 s2');
+	check('same fight, same id', M.parse(log, 'again.json').run.id, run.id);
+	check('not JSON', !!M.parse('{oops', 'x').error, true);
+	check('a scan is sent to the Import tab', /Import tab/.test(M.parse({ format: 'dbb-inventory', version: 1 }).error), true);
+	check('an old meter export', /old meter/.test(M.parse({ format: 'dbb-dps', version: 1 }).error), true);
+	check('an export without hits', /no hits/.test(M.parse({ format: 'dbb-dps', version: 2, hits: [], rotation: { casts: [] } }).error), true);
+	check('clock text', M.clockText(83300), '1:23.3');
+
+	// Saved combos and runs live in the library and merge like builds.
+	const saved = L.saveCombo({ name: 'From the meter', discipline: 3, steps: st.steps, source: { type: 'meter', dps: w20.dps } });
+	check('combo saved for its discipline', L.combosFor(3).length + ' ' + L.combosFor(4).length, '1 0');
+	check('same name replaces', L.saveCombo({ name: 'From the meter', discipline: 3, steps: ['basic'] }).id, saved.id);
+	const put1 = L.putRun(run), put2 = L.putRun(M.parse(log, 'again.json').run);
+	check('a run imported twice replaces itself', L.runs().length + ' ' + put1.replaced + ' ' + put2.replaced, '1 false true');
+	const other = L.merge(L.current(), { combos: [{ id: 'cremote', name: 'Remote', discipline: 3, steps: ['basic'], saved: Date.now() + 5 }] });
+	check('merge keeps saved combos from both sides', other.combos.map(c => c.name).sort().join(), 'From the meter,Remote');
+	L.deleteCombo(saved.id);
+	check('a deleted combo stays deleted after a merge', L.merge(L.current(), other).combos.map(c => c.name).join(), 'Remote');
+	L.clearRuns();
+	check('remove all runs', L.runs().length, 0);
+
+	// The engine plays saved combos next to the presets, and any class tier skill can be used.
+	const r = E.compute(E.defaultState(), { combos: [{ id: 'csaved', name: 'Saved one', steps: ['PoisonLance', 'basic', 'WitherStrike'], source: { type: 'meter' } }] });
+	const sc = r.combos.find(c => c.id === 'csaved');
+	check('saved combo is played', !!(sc && sc.saved && sc.result.dps > 0), true);
+	check('a Viperblade can equip Soulthief\'s Necrotic Surge', r.abilities.find(a => a.ability === 'PoisonLance').from, 'Soulthief');
+	check('but not Soulthief\'s master skills', r.abilities.some(a => a.ability === 'SoulShatter'), false);
+	check('own master skills stay', r.abilities.filter(a => a.hotbar >= 4).map(a => a.ability).join(), 'MistWalk,ShadowBlade,SeekingBlades');
 }
 Promise.all(pending).then(() => console.log(ok + ' checks passed'));

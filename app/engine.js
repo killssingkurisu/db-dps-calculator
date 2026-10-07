@@ -819,9 +819,21 @@
 
 	/* ---------------- combos ---------------- */
 
+	// The skills a character can put on the hotbar: the class skills and every discipline's
+	// tier skills (slots 1-3; a Viperblade can equip Soulthief's Necrotic Surge), and the master
+	// skills (4, E, Q) of their own discipline only. Other disciplines' skills carry `from`.
 	function abilitiesFor(disc) {
 		var D = data();
-		return (D.skills[disc.cls] || []).concat(D.skills[disc.master] || []).filter(function (a) { return a.hotbar >= 1; });
+		var own = D.skills[disc.master] || [];
+		var list = (D.skills[disc.cls] || []).filter(function (a) { return a.hotbar >= 1; })
+			.concat(own.filter(function (a) { return a.hotbar >= 1 && a.hotbar <= 3; }));
+		D.disciplines.forEach(function (d) {
+			if (d.cls !== disc.cls || d.master === disc.master) return;
+			(D.skills[d.master] || []).forEach(function (a) {
+				if (a.hotbar >= 1 && a.hotbar <= 3) list.push(Object.assign({ from: d.name }, a));
+			});
+		});
+		return list.concat(own.filter(function (a) { return a.hotbar >= 4; }));
 	}
 
 	// Mages fight with their discipline's ranged basic, everyone else with the melee chain.
@@ -1393,9 +1405,12 @@
 		};
 	}
 
-	function compute(state) {
+	// opts.combos: saved combos for this discipline ({ id, name, why, steps, source }), played
+	// next to the presets.
+	function compute(state, opts) {
 		var D = data();
 		state = state || defaultState();
+		opts = opts || {};
 		var build = decodeBuild(state.talents);
 		var disc = D.disciplines[build.discipline];
 		var cls = disc.cls;
@@ -1489,6 +1504,10 @@
 		var presets = ((root.DBB_COMBOS || {})[disc.key] || []).map(function (c) {
 			return { id: c.id, name: c.name, why: c.why, steps: c.steps.slice(), preset: true };
 		});
+		(Array.isArray(opts.combos) ? opts.combos : []).forEach(function (c) {
+			if (!c || !c.id || !Array.isArray(c.steps) || !c.steps.length) return;
+			presets.push({ id: c.id, name: c.name, why: c.why || "", steps: c.steps.slice(0, 80), preset: false, saved: true, source: c.source || null });
+		});
 		var custom = (state.customCombo || []).filter(function (k) { return k; });
 		if (custom.length) presets.push({ id: "custom", name: "Your combo", why: "Built by you below.", steps: custom, preset: false });
 		var combos = presets.map(function (c) {
@@ -1524,7 +1543,7 @@
 			abilities: abilities.map(function (a) {
 				var r = rankOf(a, rank);
 				return { ability: a.ability, name: a.name, hotbar: a.hotbar, castMs: stepTime(a, rank), cooldownMs: r.cooldownMs || 0,
-					mana: r.mana || 0, masterMana: !!r.masterMana, desc: a.desc || "", party: PARTY_TARGET.test(r.target || "") };
+					mana: r.mana || 0, masterMana: !!r.masterMana, desc: a.desc || "", party: PARTY_TARGET.test(r.target || ""), from: a.from || "" };
 			}),
 			// Everything simulateParty needs to play this character in a party.
 			env: comboEnv,

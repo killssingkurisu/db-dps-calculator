@@ -4,12 +4,12 @@
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 	<title>Dungeon Blitz DPS Calculator</title>
-	<meta name="description" content="Dungeon Blitz DPS Calculator: plan level 50 builds with talents, gear, runes and charms, import your gear from the game, and work out solo and party combo DPS.">
+	<meta name="description" content="Dungeon Blitz DPS Calculator: plan level 50 builds with talents, gear, runes and charms, import your gear and your damage meter runs from the game, and work out solo and party combo DPS.">
 	<link rel="shortcut icon" href="favicon.ico">
 	<link rel="preconnect" href="https://fonts.googleapis.com">
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 	<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya+Sans:ital,wght@0,400;0,500;0,700;1,400&family=Grenze:wght@600;700&display=swap">
-	<link rel="stylesheet" href="app/app.css?v=6">
+	<link rel="stylesheet" href="app/app.css?v=7">
 	<script>
 		// Pop-out combo window: style it before first paint.
 		if (/[?&]view=combos(&|$)/.test(location.search)) document.documentElement.className += " popout";
@@ -23,10 +23,11 @@
 	<script src="talents/js/templar-data.js?v=2"></script>
 	<script src="app/data/game-data.js?v=4"></script>
 	<script src="app/combos.js?v=2"></script>
-	<script src="app/engine.js?v=8"></script>
-	<script src="app/library.js?v=3"></script>
+	<script src="app/engine.js?v=9"></script>
+	<script src="app/library.js?v=4"></script>
+	<script src="app/meter.js?v=1"></script>
 	<script src="app/drive.js?v=2" defer></script>
-	<script src="app/app.js?v=8" defer></script>
+	<script src="app/app.js?v=9" defer></script>
 </head>
 <body>
 	<header class="appbar">
@@ -227,6 +228,7 @@
 				<div class="segmented combo-scope" role="radiogroup" aria-label="Whose combo">
 					<button type="button" role="radio" data-combo-scope="character">Character</button>
 					<button type="button" role="radio" data-combo-scope="party">Party</button>
+					<button type="button" role="radio" data-combo-scope="meter">DPS meter</button>
 				</div>
 				<div class="combos-bar-tools" id="combos-tools"></div>
 			</div>
@@ -247,6 +249,28 @@
 						<p class="panel-note">Click skills in the order you cast them. It shows up in the list above as “Your combo”.</p>
 					</div>
 					<div id="combo-builder"></div>
+				</section>
+			</div>
+
+			<div id="combos-meter" hidden>
+				<section class="panel meter-panel" id="meter-panel" aria-labelledby="runs-title">
+					<div class="panel-head">
+						<h2 id="runs-title">Runs from the DPS meter</h2>
+						<div class="panel-tools" id="runs-tools"></div>
+					</div>
+					<p class="panel-note">Fights exported from DB DPS Launcher. For each one the calculator finds the 5, 10 and 20 seconds of casting that did the most damage. Every hit and DoT tick counts for the cast that caused it, as the meter counts them, so a DoT's later ticks stay with the cast that put it up.</p>
+					<div id="runs-body"></div>
+					<input type="file" id="meter-file" accept=".json,application/json" multiple hidden>
+				</section>
+				<section class="panel combo-window" id="window-panel" aria-labelledby="window-title" hidden>
+					<div class="panel-head">
+						<div>
+							<h2 id="window-title">Best rotation</h2>
+							<p class="panel-note" id="window-sub"></p>
+						</div>
+						<div class="panel-tools" id="window-tools"></div>
+					</div>
+					<div id="window-body"></div>
 				</section>
 			</div>
 

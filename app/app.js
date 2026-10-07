@@ -6,7 +6,9 @@
 	var E = window.DBB_ENGINE;
 	var LIB = window.DBB_LIBRARY;
 	var DRIVE = window.DBB_DRIVE;
+	var METER = window.DBB_METER;
 	var SCANNER_URL = "https://github.com/killssingkurisu/db-inventory-scanner/releases/latest";
+	var LAUNCHER_URL = "https://github.com/killssingkurisu/db-dpsmod/releases/latest";
 	var APP_KEY = "dbb-app-v1";            // the party, which member is open, party settings
 	var LAST_KEY = "dbb-last-state-v1";    // one character, from before parties; read once to move over
 	var TAB_KEY = "dbb-tab-v2";
@@ -15,6 +17,8 @@
 	var MAX_PARTY = 4;
 	var WINDOWS = [15, 30, 60];
 	var TABS = ["character", "gears", "talents", "combos", "party", "import", "settings"];
+	var SCOPES = ["character", "party", "meter"];
+	var MAX_STEPS = 80;
 	var ELEMENT_LABEL = { "": "Unknown or neutral" };
 	D.elements.forEach(function (e) { ELEMENT_LABEL[e] = e + " creature"; });
 	var BREAK_LABEL = { "": "None", "20": "20%", "35": "35%", "50": "50%", "20+35": "20% + 35%", "20+50": "20% + 50%", "35+50": "35% + 50%" };
@@ -35,6 +39,8 @@
 	var optimizeResult = null; // last "find the best combos" answer
 	var pendingScan = null;    // a scan waiting for a free load slot
 	var editLane = -1;         // which party lane has its combo builder open
+	var meterPick = { run: "", seconds: 5 };   // the meter run and window the DPS meter view shows
+	var meterSaved = null;     // { id, discipline, name }: the combo just saved from a window
 
 	/* ---------- small helpers ---------- */
 
@@ -244,6 +250,10 @@
 		if (ch && ch.name) return ch.name;
 		return i === 0 ? "You" : (ch ? discOf(ch).name : "Member " + (i + 1));
 	}
+
+	// A character's results, with the combos saved for their discipline played next to the presets.
+	function computeFor(ch) { return E.compute(ch, { combos: LIB.combosFor(discOf(ch).id) }); }
+	function combosStamp() { return LIB.combos().map(function (c) { return c.id + ":" + c.saved; }).join(","); }
 
 	// The unnamed first member is "You" on labels; sentences need its grammar.
 	function isYou(i) { var ch = app.chars[i]; return i === 0 && !(ch && ch.name); }
@@ -686,7 +696,7 @@
 		// Same combo settings, so combo DPS lines up.
 		s.comboWindow = state.comboWindow;
 		s.customCombo = state.customCombo.slice();
-		return { name: b.name, result: E.compute(s) };
+		return { name: b.name, result: computeFor(s) };
 	}
 
 	/* ---------- loads (scans from the DB Inventory Scanner) ---------- */
@@ -1157,7 +1167,7 @@
 		if (!box) return;
 		clear(box);
 		if (!signedIn) {
-			box.appendChild(el("p", { text: "Sign in to keep your saved builds and loads in your own Google Drive and get them in any browser. The calculator only sees its own hidden folder there, nothing else in your Drive." }));
+			box.appendChild(el("p", { text: "Sign in to keep your saved builds, loads, combos and meter runs in your own Google Drive and get them in any browser. The calculator only sees its own hidden folder there, nothing else in your Drive." }));
 			box.appendChild(el("div", { class: "settings-actions" }, [
 				el("button", { type: "button", class: "btn btn-primary btn-google", disabled: st.gis === "failed" ? true : null, onclick: function () { DRIVE.signIn(); } }, "Sign in with Google")
 			]));
@@ -1170,7 +1180,7 @@
 			el("span", { class: "cloud-state cloud-" + st.state, text: stateLabel(st) })
 		]));
 		var last = DRIVE.lastBackup ? DRIVE.lastBackup() : 0;
-		box.appendChild(el("p", { class: "panel-note", text: "Saved builds and loads sync on their own while you're signed in. " +
+		box.appendChild(el("p", { class: "panel-note", text: "Saved builds, loads, combos and meter runs sync on their own while you're signed in. " +
 			(last ? "Your party was last backed up " + timeAgo(last) + "." : "Back up now also keeps your party: its members, gear, talents and combos.") }));
 		var busy = st.state === "syncing" || st.state === "connecting";
 		box.appendChild(el("div", { class: "settings-actions" }, [
@@ -1180,7 +1190,7 @@
 					DRIVE.backup(JSON.parse(JSON.stringify(app))).then(function (ok) { if (ok) toast("Backed up to Google Drive"); });
 				} }),
 			el("button", { type: "button", class: "btn", text: "Load from Drive", disabled: busy || st.state === "expired" ? true : null, onclick: function () {
-				if (!window.confirm("Load from Google Drive? This browser's saved builds and loads become the Drive copy, and the party from your last backup replaces the current one.")) return;
+				if (!window.confirm("Load from Google Drive? This browser's saved builds, loads, combos and meter runs become the Drive copy, and the party from your last backup replaces the current one.")) return;
 				DRIVE.restore().then(function (res) {
 					if (res.workspace && res.workspace.data) {
 						applyWorkspace(res.workspace.data);
@@ -1217,7 +1227,7 @@
 		if (!box) return;
 		clear(box);
 		var lib = LIB.current();
-		box.appendChild(el("p", { text: "One file with your saved builds (" + lib.builds.length + "), loads (" + lib.inventories.length + ") and party (" + app.chars.length + (app.chars.length === 1 ? " member" : " members") + "). Keep it anywhere and bring it back here or in another browser." }));
+		box.appendChild(el("p", { text: "One file with your saved builds (" + lib.builds.length + "), loads (" + lib.inventories.length + "), saved combos (" + lib.combos.length + "), meter runs (" + lib.runs.length + ") and party (" + app.chars.length + (app.chars.length === 1 ? " member" : " members") + "). Keep it anywhere and bring it back here or in another browser." }));
 		box.appendChild(el("div", { class: "settings-actions" }, [
 			el("button", { type: "button", class: "btn btn-primary", text: "Download backup file", onclick: function () {
 				var data = { format: "dbb-calculator-backup", v: 1, saved: new Date().toISOString(), library: LIB.current(), workspace: app };
@@ -1238,8 +1248,9 @@
 				try { data = JSON.parse(text); } catch (e) { toast("That file isn't a backup: it is not valid JSON."); return; }
 				if (!data || data.format !== "dbb-calculator-backup") { toast("That file isn't a DPS Calculator backup."); return; }
 				var lib = data.library || {};
-				var nb = (lib.builds || []).length, ni = (lib.inventories || []).length, np = data.workspace && data.workspace.chars ? data.workspace.chars.length : 0;
-				if (!window.confirm("Restore this backup from " + when(data.saved) + "? Its " + nb + " builds and " + ni + " loads are added to this browser's" + (np ? ", and its party of " + np + " replaces the current one." : "."))) return;
+				var nb = (lib.builds || []).length, ni = (lib.inventories || []).length, nc = (lib.combos || []).length, nr = (lib.runs || []).length;
+				var np = data.workspace && data.workspace.chars ? data.workspace.chars.length : 0;
+				if (!window.confirm("Restore this backup from " + when(data.saved) + "? Its " + nb + " builds, " + ni + " loads, " + nc + " saved combos and " + nr + " meter runs are added to this browser's" + (np ? ", and its party of " + np + " replaces the current one." : "."))) return;
 				LIB.replace(LIB.merge(LIB.current(), lib), "sync");
 				if (data.workspace) applyWorkspace(data.workspace);
 				toast("Backup restored");
@@ -1504,6 +1515,7 @@
 			["Paladin specials", "Retribution reflects a share of Expertise on each hit you take: 80% at rank 1, 100% at 2, 123% at 5, 130% at 6, 155% at 10, reflecting up to 7, 9 or 10 hits; ranks in between are estimated. Hallowed Reckoning hits 4 times and applies Holy Fire with each tick from rank 5."],
 			["Combo DPS", "A combo plays its steps in a loop for the fight length against one target. Debuffs from earlier steps raise the damage of later ones, DoTs build up, refresh and tick once a second, frozen and rooted targets break free when hit, and talents that need a target state switch on while the combo keeps that state up. Buffs on you (Berserker, Draconic Soul, Chaos Wave, Ghost Blade, Empyrean Aura) and basic-attack changes (Cleaving Blows, Verdict, Sentinel Form, Pyromania, Meteor) last their real duration. Attack speed only speeds up basic attacks, as in the game. A skill on cooldown is skipped until it is ready."],
 			["Party fights", "In the Party view every member loops their own combo against the same target at the same time. The target's debuffs are shared: one member's Armor Bane, Armor Breaker, Scorch, curses, slows and stuns raise everyone's damage and switch on everyone's talents that need them, and a target bleeding or ignited by anyone counts as bleeding or ignited. Each member's DoTs stack on their own. Buffs a skill gives the whole party (Empyrean Aura) count for every member while they last. Find the best combos tries every member's presets and their own combo together and keeps the set with the most party damage."],
+			["Meter runs", "A DB DPS Launcher export lists every cast and every hit and DoT tick. Each hit counts for the cast that caused it: the latest cast of the same spell (basic attacks by their power), and rune procs such as Hemorrhage for the latest cast of any kind. The best 5, 10 and 20 s are the stretches of casting whose casts caused the most damage, DoT ticks after the stretch included; the damage that landed inside it is shown next to it. In a dungeon that damage is spread over many targets, while a saved combo plays on one. Assassinate (DeathBlowOld in the live game) fires the Assassinate powers, and ranged basic attacks play as the melee chain."],
 			["Mana", "Sustained DPS follows the game's mana: you start with 80, each basic attack hit gives 5, and skills spend their cost, so the combo stops for basic attacks when it runs dry. Basic attacks changed by Cleaving Blows, Verdict, Sentinel Form, Meteor or Pyromania give no mana (their game data has none), and Sentinel Form, Pyromania and Hailstone Embrace attacks spend master mana. Spending mana fills master mana (100 max, full at the start) for master skills; the 0.4 per mana spent used here is an estimate. Burst DPS ignores mana."],
 			["Still approximate", "Enemy defense is a flat reduction you enter, and slayer runes multiply direct hits against that creature type. Multi-hit skills assume the target stays inside the area for every pulse; dashes that pass through a target may hit it fewer times. Pets, summons, minions, Retribution's reflected damage (it depends on how often you are hit), Decoy timing, Midnight Shroud's bonus hit and the extra Expertise-based debuff duration are not counted in combo DPS. Check skill numbers against the training dummy before trusting small differences."]
 		].forEach(function (p) {
@@ -1738,8 +1750,9 @@
 				state.selectedCombo = c.id;
 				onChange();
 			} }, [
-				el("span", { class: "combo-name" }, [c.name, c.preset ? null : el("span", { class: "tag", text: "yours" }), c.result.dps === best ? el("span", { class: "tag tag-best", text: "best" }) : null]),
-				el("span", { class: "combo-steps", text: c.steps.map(function (k) { return stepName(r, k); }).join(" → ") }),
+				el("span", { class: "combo-name" }, [c.name, c.preset ? null : el("span", { class: "tag", text: c.saved ? "saved" : "yours" }), c.result.dps === best ? el("span", { class: "tag tag-best", text: "best" }) : null]),
+				el("span", { class: "combo-steps", text: stepsText(r, c.steps), title: c.steps.length > 8 ? stepsText(r, c.steps) : null }),
+				c.source && c.source.type === "meter" ? el("span", { class: "combo-measured", text: "In game " + fmt(c.source.dps) + " DPS over " + c.source.seconds + " s" }) : null,
 				el("span", { class: "combo-dps" }, [
 					el("span", { class: "value", text: fmt(c.result.dps) }), " DPS",
 					el("span", { class: "dim", text: " · burst " + fmt(c.burst.dps) }),
@@ -1754,6 +1767,55 @@
 		if (key === "basic") return "Basic attack";
 		var a = r.abilities.filter(function (x) { return x.ability === key; })[0];
 		return a ? a.name : key;
+	}
+
+	// "Withering Impact → Basic attack ×3 → Vicious Assault": a repeat in a row is written once.
+	function stepsText(r, steps) {
+		var out = [];
+		steps.forEach(function (k) {
+			var name = stepName(r, k);
+			var last = out[out.length - 1];
+			if (last && last.name === name) last.n++;
+			else out.push({ name: name, n: 1 });
+		});
+		return out.map(function (x) { return x.name + (x.n > 1 ? " ×" + x.n : ""); }).join(" → ");
+	}
+
+	// What a saved combo remembers from the game, and what can be done with it.
+	function savedComboBox(c) {
+		var box = el("div", { class: "measured" });
+		var src = c.source;
+		if (src && src.type === "meter") {
+			box.appendChild(el("p", {}, [
+				"Measured in game: ", el("b", { text: fmt(src.dps) + " DPS" }),
+				" over " + src.seconds + " s, " + METER.clockText(src.startMs) + " to " + METER.clockText(src.endMs) + " of " + src.character + "'s run" + (src.place ? " in " + src.place : "") +
+				", hitting " + src.targets + (src.targets === 1 ? " target." : " targets (" + pct(src.topTargetShare, 0) + " of it on the main one).") +
+				" The simulation above plays it on one target."
+			]));
+			if (src.rotation) box.appendChild(el("p", { class: "panel-note", text: "Rotation in game: " + src.rotation }));
+		}
+		box.appendChild(el("div", { class: "settings-actions" }, [
+			el("button", { type: "button", class: "btn btn-small", text: "Rename", onclick: function () {
+				var name = window.prompt("New name for this combo", c.name);
+				if (name && name.trim()) LIB.renameCombo(c.id, name);
+			} }),
+			el("button", { type: "button", class: "btn btn-small", text: "Copy to your combo", onclick: function () {
+				state.customCombo = c.steps.slice(0, MAX_STEPS);
+				state.selectedCombo = "custom";
+				onChange();
+				toast("Copied to your combo. Change it in the builder below.");
+			} }),
+			el("button", { type: "button", class: "btn btn-small", text: "Delete", onclick: function () {
+				if (!window.confirm("Delete the saved combo " + c.name + "?")) return;
+				app.chars.forEach(function (ch) {
+					if (ch.selectedCombo === c.id) ch.selectedCombo = "";
+					if (ch.partyCombo === c.id) ch.partyCombo = "";
+				});
+				LIB.deleteCombo(c.id);
+				toast("Deleted " + c.name);
+			} })
+		]));
+		return box;
 	}
 
 	function renderComboDetail(r, cmp) {
@@ -1775,6 +1837,7 @@
 			])
 		]));
 		box.appendChild(el("p", { class: "combo-why", text: c.why }));
+		if (c.saved) box.appendChild(savedComboBox(c));
 
 		var cols = el("div", { class: "combo-cols" });
 		box.appendChild(cols);
@@ -1833,10 +1896,21 @@
 		// Timeline of the first pass
 		var tlBox = el("div", { class: "combo-block combo-timeline" }, [el("h3", { text: "One pass of the combo" })]);
 		var ol = el("ol", { class: "timeline" });
+		// Basic attacks in a row without effects share one row.
+		var rows = [];
 		res.timeline.forEach(function (step) {
+			var last = rows[rows.length - 1];
+			if (step.basic && !step.effects.length && last && last.basic && !last.effects.length && last.name === step.name) {
+				last.n++;
+				last.ms += step.ms;
+				return;
+			}
+			rows.push({ start: step.start, ms: step.ms, name: step.name, basic: step.basic, master: step.master, effects: step.effects, n: 1 });
+		});
+		rows.forEach(function (step) {
 			ol.appendChild(el("li", { class: step.basic ? "tl-basic" : (step.master ? "tl-master" : "") }, [
 				el("span", { class: "tl-time", text: secs(step.start) }),
-				el("span", { class: "tl-name" }, [step.name, step.master ? el("span", { class: "tag", text: "master" }) : null, el("small", { text: " " + secs(step.ms) })]),
+				el("span", { class: "tl-name" }, [step.name + (step.n > 1 ? " ×" + step.n : ""), step.master ? el("span", { class: "tag", text: "master" }) : null, el("small", { text: " " + secs(step.ms) })]),
 				step.effects.length ? el("span", { class: "tl-fx", text: step.effects.join(" · ") }) : null
 			]));
 		});
@@ -1854,14 +1928,17 @@
 
 	/* ---------- Combos tab: toolbar ---------- */
 
-	function setScope(scope) {
-		comboScope = scope === "party" ? "party" : "character";
-		if (!POPOUT) storeSet(SCOPE_KEY, comboScope);
+	function showScope() {
 		document.querySelectorAll("[data-combo-scope]").forEach(function (b) {
 			b.setAttribute("aria-checked", b.getAttribute("data-combo-scope") === comboScope ? "true" : "false");
 		});
-		$("combos-character").hidden = comboScope !== "character";
-		$("combos-party").hidden = comboScope !== "party";
+		SCOPES.forEach(function (k) { var box = $("combos-" + k); if (box) box.hidden = k !== comboScope; });
+	}
+
+	function setScope(scope) {
+		comboScope = SCOPES.indexOf(scope) >= 0 ? scope : "character";
+		if (!POPOUT) storeSet(SCOPE_KEY, comboScope);
+		showScope();
 		renderResults();
 	}
 
@@ -1876,6 +1953,11 @@
 		var box = $("combos-tools");
 		if (!box) return;
 		clear(box);
+		if (comboScope === "meter") {
+			box.appendChild(el("button", { type: "button", class: "btn btn-primary", text: "Import meter files", onclick: function () { $("meter-file").click(); } }));
+			box.appendChild(el("a", { class: "btn btn-small", href: LAUNCHER_URL, target: "_blank", rel: "noopener", text: "Get DB DPS Launcher" }));
+			return;
+		}
 		if (comboScope === "party") {
 			box.appendChild(windowSelect(app.party.window, function (w) { app.party.window = w; optimizeResult = null; onChange(); }));
 			box.appendChild(segmented("Mana", [["mana", "Sustained (mana)"], ["burst", "Burst"]], app.party.mode, function (m) { app.party.mode = m; optimizeResult = null; onChange(); }));
@@ -1993,7 +2075,7 @@
 		var used = {};
 		steps.forEach(function (k) { used[k] = true; });
 		function add(k) {
-			if (steps.length >= 20) { toast("20 steps at most"); return; }
+			if (steps.length >= MAX_STEPS) { toast(MAX_STEPS + " steps at most"); return; }
 			save(steps.concat([k]));
 		}
 		var groups = [["Basic", [{ ability: "basic", name: r.basicAttack.name, castMs: basicMs, cooldownMs: 0, mana: 0, hotbar: 0 }]]];
@@ -2008,7 +2090,7 @@
 			g[1].forEach(function (a) {
 				chips.appendChild(el("button", { type: "button", class: "skill-chip" + (a.hotbar >= 4 ? " master" : "") + (used[a.ability] ? " used" : ""), title: a.desc || "", onclick: function () { add(a.ability); } }, [
 					el("span", { class: "chip-name", text: a.name + (a.party ? " (party)" : "") }),
-					el("span", { class: "chip-meta", text: a.ability === "basic" ? "one swing or shot, " + shortSecs(basicMs) : skillMeta(a) })
+					el("span", { class: "chip-meta", text: a.ability === "basic" ? "one swing or shot, " + shortSecs(basicMs) : (a.from ? a.from + ", " : "") + skillMeta(a) })
 				]));
 			});
 			row.appendChild(chips);
@@ -2016,9 +2098,14 @@
 		});
 		box.appendChild(pal);
 
-		var presetSel = el("select", { "aria-label": "Start from a preset" });
-		presetSel.appendChild(option("", "Start from a preset…"));
-		r.combos.filter(function (c) { return c.preset; }).forEach(function (c) { presetSel.appendChild(option(c.id, c.name)); });
+		var presetSel = el("select", { "aria-label": "Start from a preset or a saved combo" });
+		presetSel.appendChild(option("", "Start from a combo…"));
+		[["Presets", r.combos.filter(function (c) { return c.preset; })], ["Saved", r.combos.filter(function (c) { return c.saved; })]].forEach(function (g) {
+			if (!g[1].length) return;
+			var group = el("optgroup", { label: g[0] });
+			g[1].forEach(function (c) { group.appendChild(option(c.id, c.name)); });
+			presetSel.appendChild(group);
+		});
 		presetSel.addEventListener("change", function () {
 			var p = r.combos.filter(function (c) { return c.id === presetSel.value; })[0];
 			if (p) save(p.steps.slice());
@@ -2047,6 +2134,304 @@
 		}
 	}
 
+	/* ---------- Combos: runs from the DPS meter ---------- */
+
+	function runName(run) {
+		var base = String(run.file || "").replace(/\.json$/i, "").replace(/^[0-9a-f]{8}-/, "").trim();
+		return base || run.character.name + (run.place ? ", " + run.place : "");
+	}
+
+	function runTitle(run) { return run.character.name + "'s run" + (run.place ? " in " + run.place : ""); }
+
+	// Newest fight first.
+	function sortedRuns() {
+		return LIB.runs().sort(function (a, b) { return String(b.startedAt || b.exportedAt).localeCompare(String(a.startedAt || a.exportedAt)); });
+	}
+
+	function pickedRun() {
+		var all = sortedRuns();
+		var run = all.filter(function (x) { return x.id === meterPick.run; })[0] || all[0] || null;
+		if (run) meterPick.run = run.id;
+		return run;
+	}
+
+	function pickedWindow(run) {
+		if (!run) return null;
+		return run.windows.filter(function (w) { return w.seconds === meterPick.seconds; })[0] || run.windows[0] || null;
+	}
+
+	function importMeterFiles(files) {
+		var list = [].slice.call(files || []);
+		if (!list.length) return;
+		var left = list.length, added = [], errors = [];
+		var had = {};
+		LIB.runs().forEach(function (x) { had[x.id] = true; });
+		list.forEach(function (f) {
+			readFile(f, function (text) {
+				var res = METER.parse(text, f.name);
+				if (res.error) errors.push(f.name + ": " + res.error);
+				else added.push(LIB.putRun(res.run));
+				if (--left) return;
+				if (added.length) {
+					var newest = added.map(function (a) { return a.run; }).sort(function (a, b) { return String(b.startedAt).localeCompare(String(a.startedAt)); })[0];
+					meterPick = { run: newest.id, seconds: meterPick.seconds || 5 };
+				}
+				var ids = {};
+				added.forEach(function (a) { ids[a.run.id] = a.run; });
+				var fresh = Object.keys(ids).filter(function (id) { return !had[id]; }).length;
+				var again = Object.keys(ids).length - fresh;
+				var msg = Object.keys(ids).length === 1 ? (again ? "Updated " : "Imported ") + runName(added[added.length - 1].run)
+					: (fresh ? "Imported " + fresh + (fresh === 1 ? " run" : " runs") : "") + (again ? (fresh ? ", updated " : "Updated ") + again + (again === 1 ? " that was already here" : " that were already here") : "");
+				if (errors.length) msg = (msg ? msg + ". " : "") + errors[0] + (errors.length > 1 ? " " + (errors.length - 1) + " more files couldn't be read." : "");
+				toast(msg);
+				if (!POPOUT && tab !== "combos") setTab("combos");
+				setScope("meter");
+			});
+		});
+	}
+
+	function setupMeter() {
+		var input = $("meter-file");
+		if (!input) return;
+		input.addEventListener("change", function () {
+			importMeterFiles(input.files);
+			input.value = "";
+		});
+		var panel = $("meter-panel");
+		if (!panel) return;
+		panel.addEventListener("dragover", function (e) { e.preventDefault(); panel.classList.add("drop"); });
+		panel.addEventListener("dragleave", function (e) { if (!panel.contains(e.relatedTarget)) panel.classList.remove("drop"); });
+		panel.addEventListener("drop", function (e) {
+			e.preventDefault();
+			panel.classList.remove("drop");
+			var files = e.dataTransfer && e.dataTransfer.files;
+			if (files && files.length) importMeterFiles(files);
+		});
+	}
+
+	function renderMeter(r) {
+		renderMeterRuns();
+		renderMeterWindow(r);
+	}
+
+	function renderMeterRuns() {
+		var body = $("runs-body");
+		var tools = $("runs-tools");
+		if (!body) return;
+		clear(body);
+		clear(tools);
+		var all = sortedRuns();
+		if (!all.length) {
+			body.appendChild(el("div", { class: "runs-empty" }, [
+				el("p", {}, ["No runs yet. Fight with ", el("a", { href: LAUNCHER_URL, target: "_blank", rel: "noopener", text: "DB DPS Launcher" }),
+					", press Export in its Damage Meter, then bring the file in with Import meter files or drop it on this panel. Several files at once work too."])
+			]));
+			return;
+		}
+		tools.appendChild(el("button", { type: "button", class: "btn btn-small", text: "Remove all", onclick: function () {
+			if (!window.confirm("Remove all " + all.length + " meter runs" + (DRIVE && DRIVE.status().state === "synced" ? " here and in Google Drive" : "") + "? Combos you saved from them stay.")) return;
+			LIB.clearRuns();
+			toast("All meter runs removed");
+		} }));
+
+		// The best of each length across the runs.
+		var best = {};
+		all.forEach(function (run) {
+			run.windows.forEach(function (w) { if (!best[w.seconds] || w.dps > best[w.seconds]) best[w.seconds] = w.dps; });
+		});
+		var picked = pickedRun();
+		body.appendChild(el("div", { class: "run-row run-head", "aria-hidden": "true" }, [
+			el("span", { class: "run-info", text: "Run" }),
+			METER.WINDOWS.map(function (sec) { return el("span", { class: "run-win-h", text: "Best " + sec + " s" }); }),
+			el("span")
+		]));
+		var ul = el("ul", { class: "run-list", "aria-label": "Meter runs" });
+		all.forEach(function (run) {
+			var on = picked && run.id === picked.id;
+			var cells = METER.WINDOWS.map(function (sec) {
+				var w = run.windows.filter(function (x) { return x.seconds === sec; })[0];
+				if (!w) return el("span", { class: "win-btn none" }, [el("span", { class: "win-len", text: sec + " s" }), "too short"]);
+				var pressed = on && meterPick.seconds === sec;
+				var top = all.length > 1 && w.dps === best[sec];
+				return el("button", {
+					type: "button", class: "win-btn" + (top ? " best" : ""), "aria-pressed": pressed ? "true" : "false",
+					"aria-label": "Best " + sec + " s of " + runName(run) + ": " + fmt(w.dps) + " DPS" + (top ? ", the best of all runs" : ""),
+					onclick: function () { meterPick = { run: run.id, seconds: sec }; meterSaved = null; renderMeter(lastResult); }
+				}, [
+					el("span", { class: "win-len", text: sec + " s" }),
+					el("span", { class: "win-dps", text: fmt(w.dps) }),
+					el("span", { class: "win-at" }, [top ? el("span", { class: "win-best", text: "best" }) : null, (top ? ", at " : "at ") + METER.clockText(w.startMs)])
+				]);
+			});
+			ul.appendChild(el("li", { class: "run-row" + (on ? " on" : "") }, [
+				el("div", { class: "run-info" }, [
+					el("b", { class: "run-name", text: runName(run) }),
+					el("small", { text: run.character.name + (run.place ? ", " + run.place : "") + ". " + when(run.startedAt || run.exportedAt) + ", " +
+						METER.clockText(run.fight.durationMs) + " of fighting, " + fmt(run.fight.dps) + " DPS overall." })
+				]),
+				cells,
+				el("button", { type: "button", class: "icon-btn run-remove", text: "×", title: "Remove this run", "aria-label": "Remove " + runName(run), onclick: function () {
+					LIB.deleteRun(run.id);
+					toast("Removed " + runName(run));
+				} })
+			]));
+		});
+		body.appendChild(ul);
+	}
+
+	// "+1.2 s": when a cast came in its window.
+	function plusSecs(ms) { return "+" + (Math.round(ms / 100) / 10).toFixed(1) + " s"; }
+
+	function renderMeterWindow(r) {
+		var panel = $("window-panel");
+		var body = $("window-body");
+		if (!panel || !body) return;
+		clear(body);
+		var tools = $("window-tools");
+		clear(tools);
+		var run = pickedRun();
+		var w = pickedWindow(run);
+		panel.hidden = !w;
+		if (!w) return;
+		meterPick.seconds = w.seconds;
+		var info = {};
+		run.spells.forEach(function (s) { info[s.key] = s; });
+		var disc = run.discipline >= 0 ? D.disciplines[run.discipline] : null;
+
+		$("window-title").textContent = "Best " + w.seconds + " s of " + runName(run);
+		$("window-sub").textContent = runTitle(run) + (disc ? ", " + disc.name : "") + ". " + METER.clockText(w.startMs) + " to " + METER.clockText(w.endMs) + " on the meter's clock.";
+		tools.appendChild(segmented("Window length", run.windows.map(function (x) { return [String(x.seconds), x.seconds + " s"]; }), String(w.seconds), function (v) {
+			meterPick.seconds = +v;
+			meterSaved = null;
+			renderMeter(lastResult);
+		}));
+
+		// The headline: what the casts in these seconds caused.
+		body.appendChild(el("div", { class: "combo-head" }, [el("div", { class: "combo-big" }, [
+			el("span", { class: "big-num", text: fmt(w.dps) }),
+			el("span", { class: "big-unit", text: " DPS" }),
+			el("span", { class: "big-sub", text: fmt(w.damage) + " damage from the casts in these " + w.seconds + " s, their DoT ticks after it included. " +
+				fmt(w.landedDps) + " DPS landed inside the " + w.seconds + " s." })
+		])]));
+
+		var spellsUsed = w.casts.filter(function (c) { return c.kind !== "melee" && c.kind !== "ranged"; }).length;
+		var basics = w.casts.length - spellsUsed;
+		body.appendChild(el("dl", { class: "stat-pills window-pills" }, [
+			el("div", {}, [el("dt", { text: "Skills cast" }), el("dd", { text: String(spellsUsed) })]),
+			el("div", {}, [el("dt", { text: "Basic attacks" }), el("dd", { text: String(basics) })]),
+			el("div", {}, [el("dt", { text: "Hits" }), el("dd", { text: fmt(w.hits) + (w.crits ? ", " + w.crits + " crit" + (w.crits > 1 ? "s" : "") : "") })]),
+			el("div", {}, [el("dt", { text: "Targets" }), el("dd", { text: w.targets + (w.targets > 1 ? ", " + pct(w.topTargetShare, 0) + " on one" : "") })]),
+			el("div", {}, [el("dt", { text: "Over time" }), el("dd", { text: pct(w.dotShare, 0) })])
+		]));
+
+		// The casts on a strip as long as the window, then in order.
+		var ms = w.seconds * 1000;
+		var track = el("div", { class: "rot-track", role: "img", "aria-label": w.casts.length + " casts in " + w.seconds + " seconds" });
+		w.casts.forEach(function (c) {
+			var s = info[c.key] || { name: c.key, slotKey: "" };
+			var basic = c.kind === "melee" || c.kind === "ranged";
+			var master = /^(4|E|Q)$/.test(c.slotKey || s.slotKey || "");
+			track.appendChild(el("span", { class: "rot-mark" + (basic ? " basic" : master ? " master" : " spell"), style: "left:" + Math.min(99.6, c.t / ms * 100).toFixed(2) + "%",
+				title: s.name + ", " + plusSecs(c.t) + (c.damage ? ", " + fmt(c.damage) + " damage" : "") }));
+		});
+		var axis = el("div", { class: "rot-axis", "aria-hidden": "true" });
+		for (var t = 0; t <= w.seconds; t += w.seconds > 10 ? 5 : w.seconds > 5 ? 2 : 1) {
+			axis.appendChild(el("span", { style: "left:" + (t / w.seconds * 100).toFixed(2) + "%", text: t + " s" }));
+		}
+		body.appendChild(el("div", { class: "rot-strip" }, [track, axis]));
+
+		var items = [];
+		w.casts.forEach(function (c) {
+			var s = info[c.key] || { name: c.key, slotKey: "" };
+			var basic = c.kind === "melee" || c.kind === "ranged";
+			var last = items[items.length - 1];
+			if (basic && last && last.basic && last.key === c.key) { last.n++; last.damage += c.damage; return; }
+			items.push({ t: c.t, key: c.key, name: s.name, slot: basic ? "B" : (c.slotKey || s.slotKey || "?"), basic: basic, n: 1, damage: c.damage });
+		});
+		body.appendChild(el("ol", { class: "rot-list", "aria-label": "Rotation" }, items.map(function (it) {
+			return el("li", { class: "rot-item" + (it.basic ? " basic" : /^(4|E|Q)$/.test(it.slot) ? " master" : "") }, [
+				el("span", { class: "rot-t", text: plusSecs(it.t) }),
+				el("span", { class: "seq-slot", text: it.slot }),
+				el("span", { class: "rot-name", text: it.name + (it.n > 1 ? " ×" + it.n : "") }),
+				el("span", { class: "rot-dmg", text: fmt(it.damage) })
+			]);
+		})));
+
+		var cols = el("div", { class: "combo-cols" });
+		body.appendChild(cols);
+		var dist = el("div", { class: "combo-block" }, [el("h3", { text: "Damage by skill" })]);
+		var maxS = Math.max.apply(null, w.bySpell.map(function (x) { return x.damage; }).concat([1]));
+		dist.appendChild(el("ul", { class: "dist-list" }, w.bySpell.map(function (x) {
+			return el("li", {}, [
+				el("span", { class: "dist-name", text: x.name }),
+				el("span", { class: "dist-val" }, [el("span", { class: "value", text: fmt(x.damage / w.seconds) }), " DPS, " + pct(x.share, 1)]),
+				segBar([["seg-direct", x.damage - x.dot], ["seg-dot", x.dot]], maxS)
+			]);
+		})));
+		dist.appendChild(el("div", { class: "legend" }, [
+			el("span", {}, [el("i", { class: "swatch swatch-direct" }), "Hits"]),
+			el("span", {}, [el("i", { class: "swatch swatch-dot" }), "Damage over time"])
+		]));
+		cols.appendChild(dist);
+
+		// As a combo: the steps, how it simulates here, and saving it.
+		var st = METER.stepsFor(run, w);
+		var discId = disc ? disc.id : discOf(state).id;
+		var here = r && r.discipline.id === discId ? r : { abilities: run.spells.filter(function (x) { return x.calc && x.calc !== "basic"; }).map(function (x) { return { ability: x.calc, name: x.name }; }) };
+		var block = el("div", { class: "combo-block save-block" }, [el("h3", { text: "Save as a combo" })]);
+		block.appendChild(el("p", { class: "panel-note", text: st.steps.length + " steps for " + D.disciplines[discId].name + ": " + stepsText(here, st.steps).replace(/Basic attack/g, "basic attack") + "." }));
+		run.spells.forEach(function (x) {
+			if (!x.calc || x.calc === "basic" || x.calc === x.key || st.steps.indexOf(x.calc) < 0) return;
+			var calcName = stepName(here, x.calc);
+			if (calcName !== x.name) block.appendChild(el("p", { class: "panel-note", text: x.name + " plays as " + calcName + ", which fires the same powers in the game's data." }));
+		});
+		if (st.missing.length) block.appendChild(el("p", { class: "panel-note warn", text: "Not in the calculator's data, so left out: " + st.missing.join(", ") + "." }));
+		if (w.casts.some(function (c) { return c.kind === "ranged"; })) {
+			block.appendChild(el("p", { class: "panel-note", text: "Ranged basic attacks play as the melee chain in the simulation." }));
+		}
+		if (r && r.discipline.id === discId && st.steps.length) {
+			var sim = E.simulateParty([{ steps: st.steps, env: r.env }], state.comboWindow, state.comboMode !== "burst");
+			var simDps = sim && sim.members[0] ? sim.members[0].dps : 0;
+			block.appendChild(el("p", {}, ["With " + whose(app.active) + " gear and talents, looped on one target for " + state.comboWindow + " s: ",
+				el("b", { text: fmt(simDps) + " DPS" }), state.comboMode === "burst" ? " (burst)." : " (with mana)."]));
+		} else if (disc) {
+			block.appendChild(el("p", { class: "panel-note", text: "Open a " + disc.name + " in the party bar to see how it simulates with their gear and talents." }));
+		}
+		var defaultName = (runName(run) + " " + w.seconds + " s").slice(0, 60);
+		var nameInput = el("input", { type: "text", maxlength: "60", autocomplete: "off", value: defaultName });
+		var form = el("form", { class: "save-form" }, [
+			el("label", { class: "field" }, [el("span", { class: "field-label", text: "Combo name" }), nameInput]),
+			el("button", { type: "submit", class: "btn btn-primary", text: "Save as combo", disabled: st.steps.length ? null : true })
+		]);
+		form.addEventListener("submit", function (e) {
+			e.preventDefault();
+			var entry = LIB.saveCombo({
+				name: nameInput.value.trim() || defaultName,
+				discipline: discId,
+				steps: st.steps,
+				why: "The best " + w.seconds + " s of " + runTitle(run) + ", " + METER.clockText(w.startMs) + " to " + METER.clockText(w.endMs) + ", as cast in game.",
+				source: {
+					type: "meter", runId: run.id, file: run.file, character: run.character.name, place: run.place, date: run.startedAt,
+					seconds: w.seconds, startMs: w.startMs, endMs: w.endMs, dps: w.dps, landedDps: w.landedDps, damage: w.damage,
+					hits: w.hits, crits: w.crits, targets: w.targets, topTargetShare: w.topTargetShare, dotShare: w.dotShare,
+					rotation: METER.rotationText(run, w), bySpell: w.bySpell.slice(0, 8)
+				}
+			});
+			if (!entry) { toast("Nothing to save: none of these casts are in the calculator's data."); return; }
+			meterSaved = { id: entry.id, discipline: discId, name: entry.name };
+			if (discOf(state).id === discId) state.selectedCombo = entry.id;
+			onChange();
+			toast("Saved " + entry.name);
+		});
+		block.appendChild(form);
+		if (meterSaved && meterSaved.discipline === discId) {
+			var sameDisc = discOf(state).id === discId;
+			block.appendChild(el("p", { class: "saved-note", role: "status" }, ["Saved as ", el("b", { text: meterSaved.name }), ". It's in " + D.disciplines[discId].name + "'s combo list" + (sameDisc ? "" : ", and in the party lanes of every " + D.disciplines[discId].name) + ". ",
+				sameDisc ? el("button", { type: "button", class: "link-btn", text: "Show it", onclick: function () { state.selectedCombo = meterSaved.id; meterSaved = null; setScope("character"); } }) : null]));
+		}
+		cols.appendChild(block);
+	}
+
 	/* ---------- party fights ---------- */
 
 	// A member as they fight with the party: the party's target and fight length.
@@ -2059,10 +2444,10 @@
 
 	function memberResult(i) {
 		var s = partyMemberState(app.chars[i]);
-		var key = JSON.stringify(s);
+		var key = JSON.stringify(s) + "|" + combosStamp();
 		var c = partyCache[i];
 		if (c && c.key === key) return c.result;
-		var r = E.compute(s);
+		var r = computeFor(s);
 		partyCache[i] = { key: key, result: r };
 		return r;
 	}
@@ -2078,7 +2463,7 @@
 
 	var fightCache = null;
 	function partyFight() {
-		var key = JSON.stringify({ chars: app.chars, party: app.party });
+		var key = JSON.stringify({ chars: app.chars, party: app.party }) + "|" + combosStamp();
 		if (fightCache && fightCache.key === key) return fightCache.value;
 		var rs = app.chars.map(function (ch, i) { return memberResult(i); });
 		var picks = rs.map(function (r, i) { return partyComboFor(r, app.chars[i]); });
@@ -2449,7 +2834,7 @@
 		var fight = many ? partyFight() : null;
 		var frames = el("div", { class: "frames", role: "group", "aria-label": "Party members: pick one to edit" });
 		app.chars.forEach(function (ch, i) {
-			var mr = i === app.active ? r : (fight ? fight.results[i] : E.compute(ch));
+			var mr = i === app.active ? r : (fight ? fight.results[i] : computeFor(ch));
 			var dps, share = 1, note;
 			if (fight && fight.sim) {
 				var m = fight.sim.members[i];
@@ -2542,17 +2927,18 @@
 	/* ---------- render ---------- */
 
 	function renderResults() {
-		var r = E.compute(state);
+		var r = computeFor(state);
 		lastResult = r;
 		var cmp = compareResult();
 		renderPartyBar(r);
 		renderCombosTools();
 		if (comboScope === "party") renderPartyCombos();
+		else if (comboScope === "meter") renderMeter(r);
 		else renderCombosCharacter(r, cmp);
 		renderBestCombo(r);
 		renderCompareSelect();
 		if (POPOUT) {
-			document.title = (comboScope === "party" ? "Party combos" : "Combo DPS · " + charName(app.active) + ", " + r.discipline.name) + " · Dungeon Blitz DPS Calculator";
+			document.title = (comboScope === "party" ? "Party combos" : comboScope === "meter" ? "DPS meter runs" : "Combo DPS · " + charName(app.active) + ", " + r.discipline.name) + " · Dungeon Blitz DPS Calculator";
 			return;
 		}
 		renderCharHead(r);
@@ -2636,19 +3022,20 @@
 		state = app.chars[app.active];
 		var scanInHash = /^#invz?=/.test(location.hash);
 		if (!scanInHash) applyHash(readHash());
-		comboScope = storeGet(SCOPE_KEY, "character") === "party" ? "party" : "character";
+		comboScope = storeGet(SCOPE_KEY, "character");
+		if (SCOPES.indexOf(comboScope) < 0) comboScope = "character";
 		setupTabs();
-		document.querySelectorAll("[data-combo-scope]").forEach(function (b) {
-			b.setAttribute("aria-checked", b.getAttribute("data-combo-scope") === comboScope ? "true" : "false");
-		});
-		$("combos-character").hidden = comboScope !== "character";
-		$("combos-party").hidden = comboScope !== "party";
+		showScope();
 		setupSync();
+		setupMeter();
 		$("copy-link").addEventListener("click", function () {
 			if (POPOUT) copyText(shareUrl(), "Link copied");
 		});
 		if (POPOUT) {
-			LIB.onChange(function () { renderCompareSelect(); });
+			LIB.onChange(function (lib, why) {
+				renderCompareSelect();
+				if (why === "combos" || why === "runs" || why === "sync" || why === "storage") renderResults();
+			});
 			renderResults();
 			persist();
 			return;
@@ -2666,6 +3053,7 @@
 		LIB.onChange(function (lib, why) {
 			if (why === "builds" || why === "sync" || why === "storage") renderBuilds();
 			if (why === "inventories" || why === "sync" || why === "storage") { renderLoads(); renderInventory(); renderTalentImport(); }
+			if (why === "combos" || why === "runs" || why === "sync" || why === "storage") { renderResults(); return; }
 			if (tab === "party") renderParty();
 			renderFileSettings();
 		});

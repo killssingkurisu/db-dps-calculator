@@ -1,5 +1,6 @@
 /*
- * Dungeon Blitz DPS Calculator: your saved builds and scanned inventories.
+ * Dungeon Blitz DPS Calculator: your saved builds, scanned inventories, saved combos and the
+ * damage meter runs you imported (their best rotations, not the raw hits).
  *
  * Everything lives in this browser's localStorage. drive.js copies the same library to
  * Google Drive and merges it back, so it has to merge cleanly: every item has an id and a
@@ -13,6 +14,8 @@
 	var OLD_BUILDS_KEY = "dbb-saved-builds-v1";
 	var TOMBSTONE_DAYS = 180;
 	var MAX_LOADS = 4;   // scans kept at once, one per load slot
+	var MAX_RUNS = 30;   // meter runs kept; the oldest imports go first
+	var MAX_COMBO_STEPS = 80;
 	var SCAN_FORMAT = "dbb-inventory";
 	var listeners = [];
 	var lastWritten = "";
@@ -35,7 +38,9 @@
 		} catch (e) { /* storage full or blocked: the in-memory copy still works this visit */ }
 	}
 
-	function empty() { return { v: 1, builds: [], inventories: [], deleted: {}, updated: 0 }; }
+	var KINDS = ["builds", "inventories", "combos", "runs"];
+
+	function empty() { return { v: 1, builds: [], inventories: [], combos: [], runs: [], deleted: {}, updated: 0 }; }
 
 	function validBuild(b) {
 		return !!b && typeof b.id === "string" && typeof b.name === "string" && !!b.state && typeof b.state === "object";
@@ -43,6 +48,14 @@
 
 	function validInventory(x) {
 		return !!x && typeof x.id === "string" && !!x.character && Array.isArray(x.gear) && Array.isArray(x.charms);
+	}
+
+	function validCombo(c) {
+		return !!c && typeof c.id === "string" && typeof c.name === "string" && Array.isArray(c.steps) && c.steps.length > 0 && isFinite(+c.discipline);
+	}
+
+	function validRun(r) {
+		return !!r && typeof r.id === "string" && !!r.character && Array.isArray(r.windows) && !!r.fight;
 	}
 
 	function stamp(x) { return +(x.saved || x.importedAt || 0); }
@@ -70,6 +83,9 @@
 		var out = empty();
 		out.builds = (Array.isArray(lib.builds) ? lib.builds : []).filter(validBuild);
 		out.inventories = fixSlots((Array.isArray(lib.inventories) ? lib.inventories : []).filter(validInventory).map(function (x) { return Object.assign({}, x); }));
+		out.combos = (Array.isArray(lib.combos) ? lib.combos : []).filter(validCombo);
+		out.runs = (Array.isArray(lib.runs) ? lib.runs : []).filter(validRun)
+			.sort(function (a, b) { return stamp(a) - stamp(b); }).slice(-MAX_RUNS);
 		var cutoff = now() - TOMBSTONE_DAYS * 864e5;
 		Object.keys(lib.deleted || {}).forEach(function (id) {
 			var t = +lib.deleted[id];
@@ -120,7 +136,7 @@
 		Object.keys(a.deleted).concat(Object.keys(b.deleted)).forEach(function (id) {
 			out.deleted[id] = Math.max(a.deleted[id] || 0, b.deleted[id] || 0);
 		});
-		["builds", "inventories"].forEach(function (kind) {
+		KINDS.forEach(function (kind) {
 			var byId = {};
 			a[kind].concat(b[kind]).forEach(function (x) {
 				var cur = byId[x.id];
@@ -130,13 +146,14 @@
 				.filter(function (x) { return !(out.deleted[x.id] >= stamp(x)); })
 				.sort(function (x, y) { return stamp(x) - stamp(y); });
 		});
+		out.runs = out.runs.slice(-MAX_RUNS);
 		out.updated = Math.max(a.updated, b.updated);
 		return out;
 	}
 
 	function same(a, b) {
 		function key(l) {
-			return JSON.stringify({ b: l.builds, i: l.inventories, d: l.deleted });
+			return JSON.stringify({ b: l.builds, i: l.inventories, c: l.combos, r: l.runs, d: l.deleted });
 		}
 		return key(clean(a)) === key(clean(b));
 	}
@@ -243,6 +260,88 @@
 		if (talents) inv.talents = talents; else delete inv.talents;
 		inv.importedAt = now();
 		commit("inventories");
+	}
+
+	/* ---------- saved combos ---------- */
+
+	function combos() { return current().combos.slice(); }
+
+	// The combos saved for one discipline, oldest first.
+	function combosFor(discipline) {
+		return current().combos.filter(function (c) { return +c.discipline === +discipline; });
+	}
+
+	// Saves a combo: { name, discipline, steps, why?, source? }. A combo with the same name for
+	// the same discipline is replaced.
+	function saveCombo(c) {
+		current();
+		var name = String(c.name || "").trim().slice(0, 60) || "Saved combo";
+		var existing = lib.combos.filter(function (x) { return x.name === name && +x.discipline === +c.discipline; })[0];
+		var entry = {
+			id: existing ? existing.id : "c" + now().toString(36) + Math.random().toString(36).slice(2, 6),
+			name: name,
+			discipline: +c.discipline,
+			steps: (c.steps || []).filter(function (k) { return typeof k === "string" && k; }).slice(0, MAX_COMBO_STEPS),
+			why: String(c.why || "").slice(0, 300),
+			source: c.source ? JSON.parse(JSON.stringify(c.source)) : null,
+			saved: now()
+		};
+		if (!entry.steps.length) return null;
+		lib.combos = lib.combos.filter(function (x) { return x.id !== entry.id; }).concat([entry]);
+		delete lib.deleted[entry.id];
+		commit("combos");
+		return entry;
+	}
+
+	function renameCombo(id, name) {
+		current();
+		var c = lib.combos.filter(function (x) { return x.id === id; })[0];
+		name = String(name || "").trim().slice(0, 60);
+		if (!c || !name) return;
+		c.name = name;
+		c.saved = now();
+		commit("combos");
+	}
+
+	function deleteCombo(id) {
+		current();
+		lib.combos = lib.combos.filter(function (x) { return x.id !== id; });
+		lib.deleted[id] = now();
+		commit("combos");
+	}
+
+	/* ---------- damage meter runs ---------- */
+
+	// Newest import first.
+	function runs() { return current().runs.slice().sort(function (a, b) { return stamp(b) - stamp(a); }); }
+
+	// Adds a run from DB DPS Launcher (an export of the same fight replaces the earlier one).
+	// Returns { run, replaced }.
+	function putRun(run) {
+		current();
+		var replaced = lib.runs.some(function (x) { return x.id === run.id; });
+		run.importedAt = now();
+		lib.runs = lib.runs.filter(function (x) { return x.id !== run.id; }).concat([run]);
+		var gone = lib.runs.slice(0, Math.max(0, lib.runs.length - MAX_RUNS));
+		gone.forEach(function (x) { lib.deleted[x.id] = now(); });
+		lib.runs = lib.runs.slice(-MAX_RUNS);
+		delete lib.deleted[run.id];
+		commit("runs");
+		return { run: run, replaced: replaced };
+	}
+
+	function deleteRun(id) {
+		current();
+		lib.runs = lib.runs.filter(function (x) { return x.id !== id; });
+		lib.deleted[id] = now();
+		commit("runs");
+	}
+
+	function clearRuns() {
+		current();
+		lib.runs.forEach(function (x) { lib.deleted[x.id] = now(); });
+		lib.runs = [];
+		commit("runs");
 	}
 
 	// Replace the whole library with a merged copy from Google Drive.
@@ -410,6 +509,8 @@
 		inventories: inventories, putInventory: putInventory, deleteInventory: deleteInventory,
 		parseScan: parseScan, readScan: readScan, parseTalents: parseTalents,
 		MAX_LOADS: MAX_LOADS, inventoryInSlot: inventoryInSlot, freeSlot: freeSlot, slotFor: slotFor,
-		clearInventories: clearInventories, moveInventory: moveInventory, setInventoryTalents: setInventoryTalents
+		clearInventories: clearInventories, moveInventory: moveInventory, setInventoryTalents: setInventoryTalents,
+		combos: combos, combosFor: combosFor, saveCombo: saveCombo, renameCombo: renameCombo, deleteCombo: deleteCombo,
+		runs: runs, putRun: putRun, deleteRun: deleteRun, clearRuns: clearRuns, MAX_RUNS: MAX_RUNS
 	};
 })(typeof window !== "undefined" ? window : globalThis);
