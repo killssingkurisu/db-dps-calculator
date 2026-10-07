@@ -428,4 +428,26 @@ for (const disc of D.disciplines) {
 	check('but not Soulthief\'s master skills', r.abilities.some(a => a.ability === 'SoulShatter'), false);
 	check('own master skills stay', r.abilities.filter(a => a.hotbar >= 4).map(a => a.ability).join(), 'MistWalk,ShadowBlade,SeekingBlades');
 }
+// 21. Replaying a meter window: the game's casts at their own times, this character's numbers.
+{
+	const r = E.compute(E.defaultState());
+	const casts = [{ t: 0, key: 'WitherStrike' }, { t: 700, key: 'basic' }, { t: 1200, key: 'basic' }, { t: 4000, key: 'Assassinate' }, { t: 9500, key: 'PoisonLance' }];
+	const rep = E.replayCombo(casts, r.env, 10);
+	check('replay casts at their own times', rep.castLog.map(c => c.start).join(), '0,4000,9500');
+	check('replay does not loop', rep.casts, 3);
+	check('replay keeps basic attacks', rep.timeline.filter(x => x.basic).length, 2);
+	const windowOnly = E.simulateParty([{ steps: casts, env: r.env }], 10, false).members[0];
+	check('DoT ticks after the window count in a replay', rep.total > windowOnly.total * 1.2, true);
+	check('replay DPS is over the window', Math.round(rep.dps), Math.round(rep.total / 10));
+	const strong = E.defaultState();
+	strong.extra.expertise = 3000;
+	const rs = E.compute(strong);
+	check('more Expertise, more replayed damage', E.replayCombo(casts, rs.env, 10).total > rep.total, true);
+	const sentinel = E.compute(Object.assign(E.defaultState(), { talents: '6' }));
+	const twice = E.replayCombo([{ t: 0, key: 'SentinelForm' }, { t: 2000, key: 'SentinelForm' }], sentinel.env, 5);
+	check('cooldowns and mana don\'t stop a replay', twice.casts, 2);
+	check('casts after the window are left out', E.replayCombo([{ t: 0, key: 'basic' }, { t: 6000, key: 'WitherStrike' }], r.env, 5).casts, 0);
+	check('meter steps carry their cast times', JSON.stringify(M.stepsFor({ spells: [{ key: 'WitherStrike', calc: 'WitherStrike' }] },
+		{ casts: [{ t: 0, key: 'RapierMelee', kind: 'melee' }, { t: 812.4, key: 'WitherStrike', kind: 'spell' }] }).casts), '[{"t":0,"key":"basic"},{"t":812,"key":"WitherStrike"}]');
+}
 Promise.all(pending).then(() => console.log(ok + ' checks passed'));

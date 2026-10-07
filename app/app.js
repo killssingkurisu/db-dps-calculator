@@ -1515,7 +1515,7 @@
 			["Paladin specials", "Retribution reflects a share of Expertise on each hit you take: 80% at rank 1, 100% at 2, 123% at 5, 130% at 6, 155% at 10, reflecting up to 7, 9 or 10 hits; ranks in between are estimated. Hallowed Reckoning hits 4 times and applies Holy Fire with each tick from rank 5."],
 			["Combo DPS", "A combo plays its steps in a loop for the fight length against one target. Debuffs from earlier steps raise the damage of later ones, DoTs build up, refresh and tick once a second, frozen and rooted targets break free when hit, and talents that need a target state switch on while the combo keeps that state up. Buffs on you (Berserker, Draconic Soul, Chaos Wave, Ghost Blade, Empyrean Aura) and basic-attack changes (Cleaving Blows, Verdict, Sentinel Form, Pyromania, Meteor) last their real duration. Attack speed only speeds up basic attacks, as in the game. A skill on cooldown is skipped until it is ready."],
 			["Party fights", "In the Party view every member loops their own combo against the same target at the same time. The target's debuffs are shared: one member's Armor Bane, Armor Breaker, Scorch, curses, slows and stuns raise everyone's damage and switch on everyone's talents that need them, and a target bleeding or ignited by anyone counts as bleeding or ignited. Each member's DoTs stack on their own. Buffs a skill gives the whole party (Empyrean Aura) count for every member while they last. Find the best combos tries every member's presets and their own combo together and keeps the set with the most party damage."],
-			["Meter runs", "A DB DPS Launcher export lists every cast and every hit and DoT tick. Each hit counts for the cast that caused it: the latest cast of the same spell (basic attacks by their power), and rune procs such as Hemorrhage for the latest cast of any kind. The best 5, 10 and 20 s are the stretches of casting whose casts caused the most damage, DoT ticks after the stretch included; the damage that landed inside it is shown next to it. In a dungeon that damage is spread over many targets, while a saved combo plays on one. Assassinate (DeathBlowOld in the live game) fires the Assassinate powers, and ranged basic attacks play as the melee chain."],
+			["Meter runs", "A DB DPS Launcher export lists every cast and every hit and DoT tick. Each hit counts for the cast that caused it: the latest cast of the same spell (basic attacks by their power), and rune procs such as Hemorrhage for the latest cast of any kind. The best 5, 10 and 20 s are the stretches of casting whose casts caused the most damage, DoT ticks after the stretch included; the damage that landed inside it is shown next to it. In a dungeon that damage is spread over many targets, while a saved combo plays on one. Assassinate (DeathBlowOld in the live game) fires the Assassinate powers, and ranged basic attacks play as the melee chain. In the Gears and Talents tabs a saved window is replayed: each cast at the moment it was cast in game, with this character's numbers, against one target, mana and cooldowns not checked (the game allowed them), DoT ticks after the window counted."],
 			["Mana", "Sustained DPS follows the game's mana: you start with 80, each basic attack hit gives 5, and skills spend their cost, so the combo stops for basic attacks when it runs dry. Basic attacks changed by Cleaving Blows, Verdict, Sentinel Form, Meteor or Pyromania give no mana (their game data has none), and Sentinel Form, Pyromania and Hailstone Embrace attacks spend master mana. Spending mana fills master mana (100 max, full at the start) for master skills; the 0.4 per mana spent used here is an estimate. Burst DPS ignores mana."],
 			["Still approximate", "Enemy defense is a flat reduction you enter, and slayer runes multiply direct hits against that creature type. Multi-hit skills assume the target stays inside the area for every pulse; dashes that pass through a target may hit it fewer times. Pets, summons, minions, Retribution's reflected damage (it depends on how often you are hit), Decoy timing, Midnight Shroud's bonus hit and the extra Expertise-based debuff duration are not counted in combo DPS. Check skill numbers against the training dummy before trusting small differences."]
 		].forEach(function (p) {
@@ -2412,7 +2412,7 @@
 				why: "The best " + w.seconds + " s of " + runTitle(run) + ", " + METER.clockText(w.startMs) + " to " + METER.clockText(w.endMs) + ", as cast in game.",
 				source: {
 					type: "meter", runId: run.id, file: run.file, character: run.character.name, place: run.place, date: run.startedAt,
-					seconds: w.seconds, startMs: w.startMs, endMs: w.endMs, dps: w.dps, landedDps: w.landedDps, damage: w.damage,
+					seconds: w.seconds, startMs: w.startMs, endMs: w.endMs, casts: st.casts, dps: w.dps, landedDps: w.landedDps, damage: w.damage,
 					hits: w.hits, crits: w.crits, targets: w.targets, topTargetShare: w.topTargetShare, dotShare: w.dotShare,
 					rotation: METER.rotationText(run, w), bySpell: w.bySpell.slice(0, 8)
 				}
@@ -2430,6 +2430,150 @@
 				sameDisc ? el("button", { type: "button", class: "link-btn", text: "Show it", onclick: function () { state.selectedCombo = meterSaved.id; meterSaved = null; setScope("character"); } }) : null]));
 		}
 		cols.appendChild(block);
+	}
+
+	/* ---------- Talents and Gears tabs: the chosen imported combo, worked out here ---------- */
+
+	// Only the spell execution and the time window come from the game; every number is worked
+	// out again from this character's gear and talents.
+	var checkMemo = { key: "", dps: 0, delta: 0 };
+
+	function importedCombos(r) {
+		return r.combos.filter(function (c) { return c.saved && c.source && c.source.type === "meter"; });
+	}
+
+	// The chosen combo when it's an imported one, else the newest imported one.
+	function chosenImported(r) {
+		var list = importedCombos(r);
+		return list.filter(function (c) { return c.id === state.selectedCombo; })[0] || list[list.length - 1] || null;
+	}
+
+	// The casts and their times in the window: saved with the combo, or read again from its run.
+	function importedCasts(c) {
+		var src = c.source || {};
+		if (Array.isArray(src.casts) && src.casts.length) return src.casts;
+		var run = LIB.runs().filter(function (x) { return x.id === src.runId; })[0];
+		var w = run && run.windows.filter(function (x) { return x.seconds === src.seconds; })[0];
+		return w ? METER.stepsFor(run, w).casts : null;
+	}
+
+	function replayImported(c, env) {
+		var secs = (c.source && c.source.seconds) || 10;
+		var casts = importedCasts(c);
+		if (casts && casts.length) return { res: E.replayCombo(casts, env, secs), casts: casts, secs: secs, timed: true };
+		var sim = E.simulateParty([{ steps: c.steps, env: env }], secs, true);
+		return { res: sim ? sim.members[0] : null, casts: null, secs: secs, timed: false };
+	}
+
+	function slotLabel(r, key) {
+		if (key === "basic") return "B";
+		var a = r.abilities.filter(function (x) { return x.ability === key; })[0];
+		return a ? ({ 4: "4", 5: "E", 6: "Q" }[a.hotbar] || String(a.hotbar)) : "?";
+	}
+
+	function renderComboCheck(r, cmp) {
+		var boxes = ["talents-combo", "gears-combo"].map($).filter(Boolean);
+		if (!boxes.length) return;
+		var c = chosenImported(r);
+		var play = c ? replayImported(c, r.env) : null;
+		var dps = play && play.res ? play.res.dps : 0;
+		if (c) {
+			var key = app.active + "|" + c.id;
+			if (checkMemo.key !== key) checkMemo = { key: key, dps: dps, delta: 0 };
+			else if (Math.abs(dps - checkMemo.dps) > 0.5) { checkMemo.delta = dps - checkMemo.dps; checkMemo.dps = dps; }
+		}
+		var other = c && cmp && cmp.result.discipline.id === r.discipline.id ? replayImported(c, cmp.result.env).res : null;
+		boxes.forEach(function (box) {
+			clear(box);
+			renderCheckInto(box, r, c, play, other, cmp);
+		});
+	}
+
+	function renderCheckInto(box, r, c, play, other, cmp) {
+		var list = importedCombos(r);
+		var head = el("div", { class: "check-head" }, [el("h2", { text: "Imported combo" })]);
+		box.appendChild(head);
+		if (!c) {
+			box.appendChild(el("p", { class: "panel-note" }, ["No imported combo for " + r.discipline.name + " yet. Save one from a damage meter run in ",
+				el("button", { type: "button", class: "link-btn", text: "Combos, DPS meter", onclick: function () { setTab("combos"); setScope("meter"); } }),
+				" and it shows here, worked out with " + whose(app.active) + " gear and talents."]));
+			return;
+		}
+		if (list.length > 1) {
+			var sel = el("select", { "aria-label": "Imported combo" });
+			list.forEach(function (x) { sel.appendChild(option(x.id, x.name, x.id === c.id)); });
+			sel.addEventListener("change", function () { state.selectedCombo = sel.value; onChange(); });
+			head.appendChild(sel);
+		} else {
+			head.appendChild(el("span", { class: "check-name", text: c.name }));
+		}
+		var res = play.res;
+		box.appendChild(el("p", { class: "panel-note check-note", text: play.timed
+			? "The spells and when they were cast in game, over its " + play.secs + " s. The numbers are worked out from " + whose(app.active) + " gear and talents, on one target, DoT ticks after the " + play.secs + " s included."
+			: "Its cast times weren't kept, so the spells play back to back over " + play.secs + " s. The numbers are worked out from " + whose(app.active) + " gear and talents, on one target." }));
+
+		var grid = el("div", { class: "check-grid" });
+		box.appendChild(grid);
+
+		// The spell execution: a strip as long as the window, then the casts in order.
+		var left = el("div", { class: "check-casts" });
+		grid.appendChild(left);
+		if (play.timed) {
+			var ms = play.secs * 1000;
+			var track = el("div", { class: "rot-track", role: "img", "aria-label": play.casts.length + " casts in " + play.secs + " seconds" });
+			play.casts.forEach(function (x) {
+				var slot = slotLabel(r, x.key);
+				track.appendChild(el("span", { class: "rot-mark" + (x.key === "basic" ? " basic" : /^(4|E|Q)$/.test(slot) ? " master" : " spell"),
+					style: "left:" + Math.min(99.6, x.t / ms * 100).toFixed(2) + "%", title: stepName(r, x.key) + ", " + plusSecs(x.t) }));
+			});
+			var axis = el("div", { class: "rot-axis", "aria-hidden": "true" });
+			for (var t = 0; t <= play.secs; t += play.secs > 10 ? 5 : play.secs > 5 ? 2 : 1) {
+				axis.appendChild(el("span", { style: "left:" + (t / play.secs * 100).toFixed(2) + "%", text: t + " s" }));
+			}
+			left.appendChild(el("div", { class: "rot-strip" }, [track, axis]));
+		}
+		var items = [];
+		(play.timed ? play.casts : c.steps.map(function (k) { return { key: k, t: null }; })).forEach(function (x) {
+			var last = items[items.length - 1];
+			if (x.key === "basic" && last && last.key === "basic") { last.n++; return; }
+			items.push({ key: x.key, t: x.t, n: 1 });
+		});
+		left.appendChild(el("ol", { class: "rot-list", "aria-label": "Spells cast" }, items.map(function (it) {
+			var slot = slotLabel(r, it.key);
+			return el("li", { class: "rot-item" + (it.key === "basic" ? " basic" : /^(4|E|Q)$/.test(slot) ? " master" : "") }, [
+				it.t == null ? null : el("span", { class: "rot-t", text: plusSecs(it.t) }),
+				el("span", { class: "seq-slot", text: slot }),
+				el("span", { class: "rot-name", text: stepName(r, it.key) + (it.n > 1 ? " ×" + it.n : "") })
+			]);
+		})));
+
+		// The numbers, from this gear and these talents.
+		var right = el("div", { class: "check-score" });
+		grid.appendChild(right);
+		if (!res) {
+			right.appendChild(el("p", { class: "panel-note warn", text: "None of these spells can be played by a " + r.discipline.name + "." }));
+			return;
+		}
+		right.appendChild(el("div", { class: "combo-big" }, [
+			el("span", { class: "big-num", text: fmt(res.dps) }),
+			el("span", { class: "big-unit", text: " DPS" }),
+			el("span", { class: "big-sub", text: fmt(res.total) + " damage from these casts" })
+		]));
+		if (checkMemo.delta) {
+			right.appendChild(el("p", { class: "check-delta " + (checkMemo.delta > 0 ? "up" : "down"), text: (checkMemo.delta > 0 ? "+" : "−") + fmt(Math.abs(checkMemo.delta)) + " DPS from your last change" }));
+		}
+		if (other) {
+			right.appendChild(el("p", { class: "panel-note" }, [cmp.name + ": " + fmt(other.dps) + " DPS ", deltaNode(res.dps, other.dps)]));
+		}
+		var top = res.skills.slice(0, 5);
+		var maxS = Math.max.apply(null, top.map(function (x) { return x.total; }).concat([1]));
+		right.appendChild(el("ul", { class: "dist-list check-skills" }, top.map(function (x) {
+			return el("li", {}, [
+				el("span", { class: "dist-name", text: x.name }),
+				el("span", { class: "dist-val" }, [el("span", { class: "value", text: fmt(x.total / play.secs) }), ", " + pct(x.share, 0)]),
+				segBar([["seg-direct", x.direct], ["seg-crit", x.crit], ["seg-dot", x.dot]], maxS)
+			]);
+		})));
 	}
 
 	/* ---------- party fights ---------- */
@@ -2950,6 +3094,7 @@
 		renderMethod();
 		renderTalentInflow(r);
 		renderTalentFx(r);
+		renderComboCheck(r, cmp);
 		var charmCount = $("charm-count");
 		charmCount.textContent = r.charms.count + " of " + r.charmSlots + " charm sockets used";
 		charmCount.className = "panel-note charm-count" + (r.charms.count > r.charmSlots ? " over" : "");

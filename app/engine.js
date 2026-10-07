@@ -21,6 +21,7 @@
 	var HARMONY_MS = 3000;
 	var DEFAULT_WINDOW_S = 30;
 	var MIN_STEP_MS = 100;
+	var REPLAY_TAIL_MS = 30000;   // a replayed window's DoTs keep ticking this long after it
 	var SAMPLE_MS = 100;
 	// Mana (DungeonBlitz.swf): 80 mana, refilled only by basic attacks (+5 a hit, from the
 	// power's "0,5" ManaCost); skills spend it. Spending mana fills master mana (max 100),
@@ -868,7 +869,12 @@
 		var basicSpeed = 1 + Math.max(-0.5, env.attackSpeed);
 		var byKey = {};
 		env.abilities.forEach(function (a) { byKey[a.ability] = a; });
-		var resolved = (steps || []).map(function (k) {
+		// Casts with their own times ([{ t, key }], from the damage meter) are replayed as they
+		// happened: no looping, and mana and cooldowns don't stop them (the game let them happen).
+		var timed = steps && steps.length && typeof steps[0] === "object" ? steps.filter(function (c) {
+			return c && (c.key === "basic" || byKey[c.key]) && isFinite(+c.t);
+		}).sort(function (a, b) { return a.t - b.t; }) : null;
+		var resolved = timed ? timed : (steps || []).map(function (k) {
 			if (k === "basic") return { basic: true, key: "basic" };
 			return byKey[k] ? { key: k, ability: byKey[k] } : null;
 		}).filter(Boolean);
@@ -982,6 +988,29 @@
 		var castLog = [];   // every skill cast in the fight, for party timelines
 		var guard = 0;
 		var END = W - 1e-6;   // ignore float drift when steps add up to exactly the window
+		if (timed) {
+			timed.forEach(function (c) {
+				var at = Math.max(0, +c.t);
+				if (at >= END) return;
+				if (c.key === "basic") {
+					var bb = scheduleBasic(at);
+					timeline.push({ key: "basic", name: bb.override ? names[bb.key] + " basic attack" : env.basic.name, start: at, ms: bb.ms, effects: [], basic: true });
+					return;
+				}
+				var a = byKey[c.key];
+				var ra = rankOf(a, env.rank);
+				var fx = scheduleSkill({ key: c.key, ability: a }, at);
+				var d = Math.max(MIN_STEP_MS, stepTime(a, env.rank));
+				timeline.push({ key: c.key, name: a.name, start: at, ms: d, effects: fx, master: a.hotbar >= 4, hotbar: a.hotbar });
+				if (ra.masterMana) masterMana += ra.mana || 0; else mana += ra.mana || 0;
+				castCount[c.key] = (castCount[c.key] || 0) + 1;
+				castLog.push({ key: c.key, start: at, ms: d, master: a.hotbar >= 4 });
+				casts++;
+			});
+			loops = 1;
+			firstPassMs = W;
+			t = END;
+		}
 		while (t < END && guard++ < 4000) {
 			var acted = 0;
 			for (var i = 0; i < resolved.length && t < END; i++) {
@@ -1066,10 +1095,12 @@
 	 * members: [{ steps, env }] where env comes from compute(). Returns null when nobody has
 	 * a playable step; a member without one deals no damage (members[i] is null).
 	 */
-	function simulateParty(members, windowS, manaLimited) {
+	function simulateParty(members, windowS, manaLimited, opts) {
 		var D = data();
 		var limited = !!manaLimited;
 		var W = Math.max(5, Math.min(120, windowS || DEFAULT_WINDOW_S)) * 1000;
+		// opts.tailMs: hits and DoT ticks of casts made in the window still count this long after it.
+		var H = W + Math.max(0, (opts && opts.tailMs) || 0);
 		var events = [];
 		var seqNo = 0;
 		function push(ev) { ev.seq = seqNo++; events.push(ev); }
@@ -1214,7 +1245,7 @@
 				Object.keys(dm).forEach(function (b) {
 					var d = dm[b];
 					var base = env.dot(b);
-					while (d.stacks.length && d.next <= to && d.next <= W && d.next <= d.expiry) {
+					while (d.stacks.length && d.next <= to && d.next <= H && d.next <= d.expiry) {
 						var conds = targetConds(d.next, k);
 						var vs = dotVsMult(env.tal, b, conds).mult;
 						var tick = 0;
@@ -1232,7 +1263,7 @@
 		}
 
 		events.forEach(function (ev) {
-			if (ev.t > W) return;
+			if (ev.t > H) return;
 			sampleUntil(ev.t);
 			advanceDots(ev.t);
 			var c = ev.c;
@@ -1284,7 +1315,7 @@
 			});
 		});
 		sampleUntil(W);
-		advanceDots(W);
+		advanceDots(H);
 
 		var secsW = W / 1000;
 		var uptime = Object.keys(samples).map(function (k) {
@@ -1322,6 +1353,16 @@
 			};
 		});
 		return { windowS: secsW, total: total, dps: total / secsW, members: out, types: typeList(partyTypes, total), uptime: uptime, manaLimited: limited };
+	}
+
+	/*
+	 * A window of casts from the damage meter, replayed with this character's numbers: each cast
+	 * ([{ t, key }], ms from the window's start) at its own time, against one target, counting
+	 * the damage those casts cause, DoT ticks after the window included, over the window's length.
+	 */
+	function replayCombo(casts, env, windowS) {
+		var sim = simulateParty([{ steps: casts, env: env }], windowS, false, { tailMs: REPLAY_TAIL_MS });
+		return sim ? sim.members[0] : null;
 	}
 
 	// One character on its own: a party of one.
@@ -1559,7 +1600,7 @@
 		CONDITIONS: CONDITIONS, SELF_CONDITIONS: SELF_CONDITIONS, OPPOSITE: OPPOSITE, SLOTS_TOTAL: SLOTS_TOTAL,
 		ARMOR_BREAKS: ARMOR_BREAKS, ARMOR_BANE_MAX: ARMOR_BANE_MAX, SCORCH_BASE_MAX: SCORCH_BASE_MAX,
 		RETRIBUTION: RETRIBUTION, DEFAULT_WINDOW_S: DEFAULT_WINDOW_S,
-		simulateParty: simulateParty, optimizeParty: optimizeParty,
+		simulateParty: simulateParty, optimizeParty: optimizeParty, replayCombo: replayCombo,
 		MANA_MAX: MANA_MAX, MASTER_MANA_MAX: MASTER_MANA_MAX, MASTER_MANA_RATIO: MASTER_MANA_RATIO,
 		// For tools/check_engine.js.
 		debuffLabel: debuffLabel,

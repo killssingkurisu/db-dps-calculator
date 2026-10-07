@@ -336,21 +336,24 @@
 
 	// The calculator steps for a window's casts: spells by the calculator's keys, one "basic"
 	// per basic attack. Spells the calculator doesn't know are left out and named.
+	// casts: the same steps with the time each was cast, ms from the window's start: the
+	// spell execution the calculator replays with a character's own gear and talents.
 	function stepsFor(run, win) {
 		var byKey = {};
 		(run.spells || []).forEach(function (s) { byKey[s.key] = s; });
-		var steps = [], missing = [];
+		var steps = [], missing = [], casts = [];
 		win.casts.forEach(function (c) {
 			var s = byKey[c.key];
-			if (c.kind === "melee" || c.kind === "ranged" || (s && s.basic)) { steps.push("basic"); return; }
-			var k = s ? s.calc : "";
-			if (k) steps.push(k);
-			else {
+			var k = c.kind === "melee" || c.kind === "ranged" || (s && s.basic) ? "basic" : (s ? s.calc : "");
+			if (k) {
+				steps.push(k);
+				casts.push({ t: Math.max(0, Math.round(c.t)), key: k });
+			} else {
 				var n = s ? s.name : c.key;
 				if (missing.indexOf(n) < 0) missing.push(n);
 			}
 		});
-		return { steps: steps, missing: missing };
+		return { steps: steps, missing: missing, casts: casts };
 	}
 
 	// "s3 MA3 s4 RA2": the meter's own way of writing a rotation.
